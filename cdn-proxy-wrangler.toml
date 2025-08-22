@@ -1,0 +1,14 @@
+name = "cdn-divine-video"
+main = "src/cdn_proxy_worker.mjs"
+compatibility_date = "2024-08-01"
+account_id = "c84e7a9bf7ed99cb41b8e73566568c75"
+
+# Production route for cdn.divine.video
+[[routes]]
+pattern = "cdn.divine.video/*"
+zone_name = "divine.video"
+
+# Staging route for cdn-staging.divine.video
+[[routes]]
+pattern = "cdn-staging.divine.video/*"
+zone_name = "divine.video"

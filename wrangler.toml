@@ -1,0 +1,64 @@
+name = "cf-stream-service"
+main = "src/worker.mjs"
+compatibility_date = "2024-08-01"
+account_id = "c84e7a9bf7ed99cb41b8e73566568c75"
+
+# Default (used by wrangler dev without --env)
+[vars]
+LOOKUPS_ENABLED = true
+STREAM_ACCOUNT_ID = "c84e7a9bf7ed99cb41b8e73566568c75"
+STREAM_DOMAIN = "cdn.divine.video"
+R2_PUBLIC_DOMAIN = "r2.divine.video"
+
+[[kv_namespaces]]
+binding = "MEDIA_KV"
+# Create a KV and paste its id here: wrangler kv namespace create MEDIA_KV
+id = "fc3fb1f988894752ae62462d5d0d2222"
+
+# Staging environment
+[env.staging]
+name = "cf-stream-service-staging"
+account_id = "c84e7a9bf7ed99cb41b8e73566568c75"
+[env.staging.vars]
+LOOKUPS_ENABLED = true
+STREAM_ACCOUNT_ID = "c84e7a9bf7ed99cb41b8e73566568c75"
+DEV_AUTH_MODE = "true"
+STREAM_DOMAIN = "cdn-staging.divine.video"
+R2_PUBLIC_DOMAIN = "r2-staging.divine.video"
+[[env.staging.kv_namespaces]]
+binding = "MEDIA_KV"
+id = "eca883e0a5374b32ab92b3747235a1e3"
+
+# Production environment
+[env.production]
+name = "cf-stream-service-prod"
+account_id = "c84e7a9bf7ed99cb41b8e73566568c75"
+[env.production.vars]
+LOOKUPS_ENABLED = true
+STREAM_ACCOUNT_ID = "c84e7a9bf7ed99cb41b8e73566568c75"
+CLOUDFLARE_ACCOUNT_ID = "c84e7a9bf7ed99cb41b8e73566568c75"
+STREAM_DOMAIN = "cdn.divine.video"
+R2_PUBLIC_DOMAIN = "r2.divine.video"
+[[env.production.kv_namespaces]]
+binding = "MEDIA_KV"
+id = "effcf271031647f0947983f5f4211aa2"
+
+# R2 bucket binding for video migration
+[[r2_buckets]]
+binding = "R2_VIDEOS"
+bucket_name = "nostrvine-media"
+
+# Staging R2 bucket
+[[env.staging.r2_buckets]]
+binding = "R2_VIDEOS"
+bucket_name = "nostrvine-media"
+
+# Production R2 bucket
+[[env.production.r2_buckets]]
+binding = "R2_VIDEOS"
+bucket_name = "nostrvine-media"
+
+# Secrets expected (set per environment with `wrangler secret put ... --env <name>`):
+# - STREAM_API_TOKEN
+# - STREAM_WEBHOOK_SECRET
+# - MIGRATION_ADMIN_TOKEN

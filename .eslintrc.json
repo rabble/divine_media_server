@@ -1,0 +1,33 @@
+{
+  "root": true,
+  "env": {
+    "es2022": true,
+    "node": true
+  },
+  "parserOptions": {
+    "ecmaVersion": 2022,
+    "sourceType": "module"
+  },
+  "plugins": ["import"],
+  "extends": [
+    "eslint:recommended",
+    "plugin:import/recommended",
+    "prettier"
+  ],
+  "settings": {
+    "import/resolver": {
+      "node": {
+        "extensions": [".js", ".mjs"]
+      }
+    }
+  },
+  "globals": {
+    "Request": "readonly",
+    "Response": "readonly",
+    "fetch": "readonly",
+    "crypto": "readonly"
+  },
+  "rules": {
+    "import/no-unresolved": ["error", { "ignore": ["^node:"] }]
+  }
+}

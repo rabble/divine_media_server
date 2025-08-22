@@ -1,0 +1,25 @@
+{
+  "name": "cf-stream-service",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "lint": "eslint . --ext .js,.mjs,.cjs",
+    "format": "prettier -c .",
+    "format:fix": "prettier -w .",
+    "cf:login": "wrangler login",
+    "setup:dev": "node tools/setup_wrangler.mjs dev",
+    "setup:staging": "node tools/setup_wrangler.mjs staging",
+    "setup:prod": "node tools/setup_wrangler.mjs production"
+  },
+  "devDependencies": {
+    "eslint": "^9.11.1",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-import": "^2.29.1",
+    "prettier": "^3.3.3"
+  },
+  "dependencies": {
+    "@noble/curves": "^1.6.0"
+  }
+}
