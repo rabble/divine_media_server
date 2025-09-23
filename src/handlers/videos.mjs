@@ -15,6 +15,8 @@ export async function createVideo(req, env, deps) {
   }
 
   // Simple per-pubkey rate limit: 30/hour bucket
+  // DISABLED for private use - this is Rabble's system
+  /*
   const limit = 30;
   const bucket = Math.floor(deps.now() / 3600000);
   const rlKey = `rl:pub:${verified.pubkey}:${bucket}`;
@@ -23,6 +25,7 @@ export async function createVideo(req, env, deps) {
   if (!Number.isNaN(current) && current >= limit) {
     return json(429, { error: "rate_limited" });
   }
+  */
 
   // Optional body with aliases
   let bodyJson = null;
@@ -76,7 +79,8 @@ export async function createVideo(req, env, deps) {
     if (providedVine) await env.MEDIA_KV.put(`idx:vine:${providedVine}`, JSON.stringify({ uid: mockUid }));
     if (urlDigest) await env.MEDIA_KV.put(`idx:url:${urlDigest}`, JSON.stringify({ uid: mockUid, url: providedUrl }));
     await env.MEDIA_KV.put(`idx:pubkey:${verified.pubkey}:${mockUid}`, '1');
-    await env.MEDIA_KV.put(rlKey, String(current + 1), { expirationTtl: 3600 });
+    // Rate limit tracking disabled
+    // await env.MEDIA_KV.put(rlKey, String(current + 1), { expirationTtl: 3600 });
     
     return json(200, {
       uid: mockUid,
@@ -148,8 +152,8 @@ export async function createVideo(req, env, deps) {
     if (providedVine) await env.MEDIA_KV.put(`idx:vine:${providedVine}`, JSON.stringify({ uid }));
     if (urlDigest) await env.MEDIA_KV.put(`idx:url:${urlDigest}`, JSON.stringify({ uid, url: providedUrl }));
   } catch {}
-  // Increment rate counter (best-effort)
-  try { await env.MEDIA_KV.put(rlKey, String(current + 1)); } catch {}
+  // Increment rate counter (best-effort) - DISABLED for private use
+  // try { await env.MEDIA_KV.put(rlKey, String(current + 1)); } catch {}
 
   return json(200, { uid, uploadURL, expiresAt, owner: verified.pubkey });
 }

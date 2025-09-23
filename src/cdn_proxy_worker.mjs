@@ -33,8 +33,11 @@ export default {
       newHeaders.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
       newHeaders.set('Access-Control-Allow-Headers', 'Content-Type');
       
-      // Force download for MP4 files if requested
-      if (path.includes('/downloads/') && path.endsWith('.mp4')) {
+      // Handle MP4 files
+      if (path.endsWith('.mp4') || path.includes('/downloads/')) {
+        // Always ensure correct content type for MP4
+        newHeaders.set('Content-Type', 'video/mp4');
+        
         // Check if user wants to force download with ?download=true
         if (url.searchParams.get('download') === 'true') {
           newHeaders.set('Content-Disposition', 'attachment; filename="video.mp4"');
@@ -42,9 +45,6 @@ export default {
           // Allow inline playback by default, but specify filename for saves
           newHeaders.set('Content-Disposition', 'inline; filename="video.mp4"');
         }
-        
-        // Ensure correct content type for MP4
-        newHeaders.set('Content-Type', 'video/mp4');
       }
       
       return new Response(response.body, {

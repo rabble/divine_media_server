@@ -1,5 +1,52 @@
 # Changelog
 
+## [2025-01-21] - Blossom Protocol Support
+
+### Added
+- **Blossom protocol compatibility** - Full implementation of Blossom blob storage protocol
+  - `GET /<sha256>` - Retrieve blob by SHA-256 hash (redirects to Stream playback URL)
+  - `HEAD /<sha256>` - Check if blob exists
+  - `PUT /upload` - Upload blob with Blossom-compatible response format
+  - `GET /list/<pubkey>` - List user's blobs
+  - `DELETE /<sha256>` - Delete blob by hash with ownership verification
+
+- **Blossom authentication** - Support for kind 24242 authorization events
+  - `/src/auth/blossom.mjs` - Blossom auth verification with NIP-98 fallback
+  - Event validation for method, URL, and expiration
+  - Compatible with existing NIP-98 authentication
+
+- **Comprehensive test coverage** - 42 new tests for Blossom functionality
+  - Blob retrieval, upload, listing, and deletion tests
+  - Authentication and authorization tests
+  - Edge case and error handling tests
+  - Integration tests with existing video infrastructure
+
+### Technical Implementation
+- **Dual protocol support** - Maintains existing `/v1/*` video API while adding Blossom endpoints
+- **SHA-256 addressing** - Leverages existing `idx:sha256` KV indexing for content addressing
+- **Ownership enforcement** - Uses existing pubkey-based ownership for blob operations
+- **Stream integration** - Blossom blob retrieval redirects to Cloudflare Stream URLs
+- **Mock mode support** - Works with existing `MOCK_STREAM_API` for testing
+
+### Blossom Protocol Features
+- **Content-addressable storage** - Files identified by SHA-256 hash
+- **Nostr authentication** - Uses Nostr public/private keys for identity
+- **Multi-server compatibility** - Clients can query multiple Blossom servers
+- **File extension support** - Handles URLs like `/<hash>.mp4`
+- **Ownership verification** - Only file owners can delete their blobs
+
+### API Compatibility
+- **Backward compatible** - All existing video service endpoints unchanged
+- **Authentication interop** - Supports both NIP-98 and Blossom auth methods
+- **Response format** - Blossom endpoints return spec-compliant responses
+- **Error handling** - Proper HTTP status codes and error messages
+
+### Files Added
+- `/src/handlers/blossom.mjs` - Core Blossom protocol handlers
+- `/src/auth/blossom.mjs` - Blossom authentication and event templates
+- `/tests/blossom.test.mjs` - Comprehensive Blossom handler tests
+- `/tests/blossom_auth.test.mjs` - Authentication and authorization tests
+
 ## [2025-08-22] - Major Updates
 
 ### Added

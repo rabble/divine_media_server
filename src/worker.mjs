@@ -11,8 +11,18 @@ import { migrateBatch } from "./handlers/migrate_batch.mjs";
 import { migrateFromR2, migrateR2Batch, listR2Videos } from "./handlers/migrate_r2.mjs";
 import { handleOpenVineMigration, handleOpenVineBatchMigration } from "./handlers/migrate_openvine.mjs";
 import { enableDownloads, enableDownloadsBatch } from "./handlers/enable_downloads.mjs";
+import { homePage } from "./handlers/home.mjs";
+import { getBlobByHash, headBlobByHash, blossomUpload, listUserBlobs, deleteBlobByHash } from "./handlers/blossom.mjs";
 
 const router = createRouter([
+  { method: "GET", path: /^\/$/, handler: homePage },
+  // Blossom protocol endpoints
+  { method: "GET", path: /^\/[a-f0-9]{64}(\.[a-z0-9]+)?$/, handler: getBlobByHash },
+  { method: "HEAD", path: /^\/[a-f0-9]{64}(\.[a-z0-9]+)?$/, handler: headBlobByHash },
+  { method: "PUT", path: /^\/upload$/, handler: blossomUpload },
+  { method: "GET", path: /^\/list\/[a-f0-9]{64}$/, handler: listUserBlobs },
+  { method: "DELETE", path: /^\/[a-f0-9]{64}(\.[a-z0-9]+)?$/, handler: deleteBlobByHash },
+  // Existing video service endpoints
   { method: "POST", path: /^\/v1\/videos$/, handler: createVideo },
   { method: "POST", path: /^\/v1\/stream\/webhook$/, handler: handleStreamWebhook },
   { method: "GET", path: /^\/v1\/videos\/.+$/, handler: getVideoStatus },
