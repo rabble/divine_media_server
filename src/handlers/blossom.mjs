@@ -250,6 +250,6 @@ export async function deleteBlobByHash(req, env, deps) {
  * Verify Blossom authentication (kind 24242 event)
  */
 async function verifyBlossomAuth(req, deps) {
-  const { verifyBlossomAuth: verify } = await import('../auth/blossom.mjs');
-  return await verify(req, deps);
+  const { verifyBlossomAuth } = await import('../auth/blossom.mjs');
+  return await verifyBlossomAuth(req, deps);
 }

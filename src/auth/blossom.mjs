@@ -27,7 +27,7 @@ export async function verifyBlossomAuth(req, deps = {}) {
     }
 
     // Decode the base64 event
-    const eventJson = atob(base64Event);
+    const eventJson = base64ToString(base64Event);
     const event = JSON.parse(eventJson);
 
     // Verify it's a kind 24242 event for Blossom auth
@@ -35,34 +35,55 @@ export async function verifyBlossomAuth(req, deps = {}) {
       return null;
     }
 
-    // TODO: Verify the event signature properly
-    // For now, skip signature verification and accept the event
-    // In production, this should use proper Nostr signature verification
+    // Validate required fields
+    if (!event.pubkey || !event.sig || !event.created_at || !Array.isArray(event.tags)) {
+      return null;
+    }
+
+    // Validate URL and method tags
+    const url = new URL(req.url);
+    const method = req.method.toUpperCase();
+    const tag = (k) => {
+      for (const t of event.tags) if (Array.isArray(t) && t[0] === k) return t[1];
+      return undefined;
+    };
+
+    const authUrl = tag('u');
+    const authMethod = tag('method');
+
+    if (authUrl && authUrl !== url.toString()) {
+      return null;
+    }
+
+    if (authMethod && authMethod.toUpperCase() !== method) {
+      return null;
+    }
 
     // Check expiration (if provided)
-    const expiration = event.tags.find(tag => tag[0] === 'expiration');
+    const expiration = tag('expiration');
     if (expiration) {
-      const expireTime = parseInt(expiration[1], 10);
+      const expireTime = parseInt(expiration, 10);
       const now = Math.floor((deps.now?.() || Date.now()) / 1000);
       if (now > expireTime) {
         return null;
       }
     }
 
-    // Check method and URL (optional validation)
-    const method = event.tags.find(tag => tag[0] === 'method')?.[1];
-    const url = event.tags.find(tag => tag[0] === 'u')?.[1];
-
-    if (method && req.method !== method.toUpperCase()) {
+    // Verify event ID
+    const id = await eventId(event);
+    if (event.id && event.id !== id) {
       return null;
     }
 
-    if (url) {
-      const reqUrl = new URL(req.url);
-      const authUrl = new URL(url);
-      if (reqUrl.pathname !== authUrl.pathname) {
+    // Schnorr signature verification
+    try {
+      const { schnorr } = await import('@noble/curves/secp256k1');
+      const isValid = await schnorr.verify(event.sig, id, event.pubkey);
+      if (!isValid) {
         return null;
       }
+    } catch {
+      return null;
     }
 
     return {
@@ -77,6 +98,34 @@ export async function verifyBlossomAuth(req, deps = {}) {
     }
     return null;
   }
+}
+
+async function eventId(event) {
+  const payload = [0, event.pubkey, event.created_at, event.kind, event.tags, event.content ?? ''];
+  const enc = new TextEncoder();
+  const data = enc.encode(JSON.stringify(payload));
+  return await sha256Hex(data);
+}
+
+async function sha256Hex(input) {
+  const buf = input instanceof Uint8Array ? input : new TextEncoder().encode(String(input));
+  const digest = await crypto.subtle.digest('SHA-256', buf);
+  const arr = Array.from(new Uint8Array(digest));
+  return arr.map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+function base64ToString(b64) {
+  if (typeof atob === 'function') {
+    // Browser/Workers
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new TextDecoder().decode(bytes);
+  }
+  // Node fallback
+  // Using Buffer here is fine in tests/CI; Workers won't hit this branch
+  // eslint-disable-next-line no-undef
+  return Buffer.from(b64, 'base64').toString('utf8');
 }
 
 /**
