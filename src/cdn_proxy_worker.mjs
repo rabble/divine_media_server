@@ -74,6 +74,14 @@ export default {
         return await serveFromR2(sha256, env, url, request);
       }
 
+      // Handle direct UID requests: /<uid> or /<uid>.mp4 (32-character hex)
+      const uidMatch = path.match(/^\/([a-f0-9]{32})(\.mp4)?$/);
+      if (uidMatch) {
+        const uid = uidMatch[1];
+        console.log(`🔄 HYBRID CDN: Direct UID request for ${uid}`);
+        return await serveMP4ByUID(uid, env, url, request);
+      }
+
       // Handle Vine-style URLs: /v/<vineID>
       const vineMatch = path.match(/^\/v\/([a-zA-Z0-9_-]+)$/);
       if (vineMatch) {

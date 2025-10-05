@@ -246,6 +246,12 @@ var cdn_proxy_worker_default = {
         console.log(`\u{1F504} HYBRID CDN: Blossom request for ${sha256}${extension}`);
         return await serveFromR2(sha256, env, url, request);
       }
+      const uidMatch = path.match(/^\/([a-f0-9]{32})(\.mp4)?$/);
+      if (uidMatch) {
+        const uid = uidMatch[1];
+        console.log(`\u{1F504} HYBRID CDN: Direct UID request for ${uid}`);
+        return await serveMP4ByUID(uid, env, url, request);
+      }
       const vineMatch = path.match(/^\/v\/([a-zA-Z0-9_-]+)$/);
       if (vineMatch) {
         const vineId = vineMatch[1];
@@ -253,9 +259,9 @@ var cdn_proxy_worker_default = {
         return await serveByVineId(vineId, env, url, request);
       }
       if (path.includes("/downloads/") && path.endsWith(".mp4")) {
-        const uidMatch = path.match(/\/([a-f0-9]{32})\/downloads\//);
-        if (uidMatch) {
-          const uid = uidMatch[1];
+        const uidMatch2 = path.match(/\/([a-f0-9]{32})\/downloads\//);
+        if (uidMatch2) {
+          const uid = uidMatch2[1];
           console.log(`\u{1F504} HYBRID CDN: Direct MP4 request for UID ${uid}`);
           return await serveMP4ByUID(uid, env, url, request);
         }
