@@ -1,5 +1,23 @@
 # Changelog
 
+## [2025-01-28] - Fix CDN HTTP 500 Status Errors
+
+### Fixed
+- **CDN 500 errors** - Videos were returning HTTP 500 status codes while still serving data
+- **Immutable headers error** - `addMonitoringHeaders` function now safely handles immutable headers
+- **Response status codes** - All successful video/image responses now explicitly return HTTP 200
+
+### Technical Details
+- Wrapped header modifications in try-catch to handle Cloudflare's immutable cached responses
+- Removed async cache operations after response creation (Cloudflare Workers limitation)
+- Explicitly set status 200 for all successful R2 content responses
+- Videos now properly work with both `/{sha256}` and `/{sha256}.mp4` URL patterns
+
+### Root Cause
+- Cloudflare Workers doesn't allow async operations after returning a response
+- Cache operations were throwing errors after response was already being streamed
+- Runtime would return 500 status even though video data was successfully served
+
 ## [2025-01-27] - Remove HLS/DASH Support After Stream Removal
 
 ### BREAKING CHANGES
