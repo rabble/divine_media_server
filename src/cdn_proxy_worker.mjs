@@ -108,7 +108,26 @@ export default {
         return await handleThumbnailRequest(url, env);
       }
 
-      // Default: proxy to Stream for HLS, manifests
+      // Return 410 Gone for HLS/DASH manifest requests (Stream removed)
+      if (path.includes('/manifest/video.m3u8') || path.includes('/manifest/video.mpd')) {
+        return new Response(JSON.stringify({
+          error: 'gone',
+          reason: 'stream_removed',
+          message: 'HLS/DASH streaming is no longer available. Cloudflare Stream has been removed. Please use direct MP4 URLs instead.',
+          alternatives: {
+            mp4: `https://${env.CDN_DOMAIN || 'cdn.divine.video'}/<sha256>.mp4`,
+            note: 'Videos are now served directly from R2 storage as MP4 files'
+          }
+        }), {
+          status: 410,
+          headers: {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*'
+          }
+        });
+      }
+
+      // Default: proxy to Stream for remaining legacy requests
       return await proxyToStream(request, env, path);
 
     } catch (error) {
@@ -512,12 +531,12 @@ async function serveBlossom(sha256, env) {
 
     const { uid } = JSON.parse(indexData);
 
-    // Construct HLS URL
-    const streamDomain = env.STREAM_CUSTOMER_DOMAIN || 'customer-4c3uhd5qzuhwz9hu.cloudflarestream.com';
-    const hlsUrl = `https://${streamDomain}/${uid}/manifest/video.m3u8`;
+    // Redirect to MP4 URL (will be served from R2)
+    const cdnDomain = env.CDN_DOMAIN || 'cdn.divine.video';
+    const mp4Url = `https://${cdnDomain}/${sha256}.mp4`;
 
-    console.log(`🔄 HYBRID CDN: Redirecting Blossom ${sha256} to HLS ${hlsUrl}`);
-    return Response.redirect(hlsUrl, 302);
+    console.log(`🔄 HYBRID CDN: Redirecting Blossom ${sha256} to MP4 ${mp4Url}`);
+    return Response.redirect(mp4Url, 302);
 
   } catch (error) {
     console.error(`❌ HYBRID CDN: Blossom error for ${sha256}:`, error);

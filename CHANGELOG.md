@@ -1,5 +1,23 @@
 # Changelog
 
+## [2025-01-27] - Remove HLS/DASH Support After Stream Removal
+
+### BREAKING CHANGES
+- **Removed HLS (.m3u8) URL generation** - No longer generating HLS manifest URLs
+- **Removed DASH (.mpd) URL generation** - No longer generating DASH manifest URLs
+- **HLS requests return HTTP 410** - CDN now returns "Gone" status for manifest requests
+
+### Changed
+- **stream_urls.mjs** - Removed hlsUrl, dashUrl, iframeUrl, and webmUrl from URL generation
+- **CDN proxy** - Returns HTTP 410 for `/manifest/video.m3u8` and `/manifest/video.mpd` requests
+- **Blossom handler** - Redirects to MP4 URLs instead of HLS manifests
+- **Video serving** - All videos now served exclusively as MP4 files from R2
+
+### Impact
+- **iOS compatibility** - iOS devices must use MP4 URLs directly (no adaptive streaming)
+- **Nostr events** - Should only include MP4 URLs in imeta tags, not HLS URLs
+- **Bandwidth usage** - No adaptive bitrate streaming, full MP4 files must be downloaded
+
 ## [2025-01-26] - Remove Cloudflare Stream and Migrate to R2-Only Storage
 
 ### BREAKING CHANGES

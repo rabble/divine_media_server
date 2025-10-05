@@ -269,6 +269,23 @@ var cdn_proxy_worker_default = {
       if (path.includes("/thumbnails/")) {
         return await handleThumbnailRequest(url, env);
       }
+      if (path.includes("/manifest/video.m3u8") || path.includes("/manifest/video.mpd")) {
+        return new Response(JSON.stringify({
+          error: "gone",
+          reason: "stream_removed",
+          message: "HLS/DASH streaming is no longer available. Cloudflare Stream has been removed. Please use direct MP4 URLs instead.",
+          alternatives: {
+            mp4: `https://${env.CDN_DOMAIN || "cdn.divine.video"}/<sha256>.mp4`,
+            note: "Videos are now served directly from R2 storage as MP4 files"
+          }
+        }), {
+          status: 410,
+          headers: {
+            "Content-Type": "application/json",
+            "Access-Control-Allow-Origin": "*"
+          }
+        });
+      }
       return await proxyToStream(request, env, path);
     } catch (error) {
       errors++;

@@ -2,23 +2,20 @@
 // ABOUTME: Centralizes URL generation to avoid hardcoding throughout the codebase
 
 export function getStreamUrls(uid, env, options = {}) {
-  // Use CDN domain for hybrid routing, otherwise fall back to Stream domain
+  // Use CDN domain for R2 serving
   const cdnDomain = env.CDN_DOMAIN || 'cdn.divine.video';
-  const streamDomain = env.STREAM_DOMAIN || `customer-${env.STREAM_ACCOUNT_ID}.cloudflarestream.com`;
-
-  // For hybrid routing, prefer CDN domain that can route to R2 for MP4s
-  const domain = options.useStreamDomain ? streamDomain : cdnDomain;
 
   return {
-    hlsUrl: `https://${domain}/${uid}/manifest/video.m3u8`,
-    dashUrl: `https://${domain}/${uid}/manifest/video.mpd`,
-    mp4Url: `https://${domain}/${uid}/downloads/default.mp4`,
-    thumbnailUrl: `https://${domain}/${uid}/thumbnails/thumbnail.jpg`,
-    iframeUrl: `https://${domain}/${uid}/iframe`,
-    // Additional formats
-    webmUrl: `https://${domain}/${uid}/downloads/webm.webm`,
-    posterUrl: `https://${domain}/${uid}/thumbnails/thumbnail.jpg?time=0s`,
-    animatedThumbnailUrl: `https://${domain}/${uid}/thumbnails/thumbnail.gif`
+    // Stream removed - no HLS/DASH support
+    // hlsUrl: REMOVED - Stream no longer available
+    // dashUrl: REMOVED - Stream no longer available
+    mp4Url: `https://${cdnDomain}/${uid}/downloads/default.mp4`,
+    // Thumbnails still generated via Media Transformations API
+    thumbnailUrl: `https://${cdnDomain}/${uid}/thumbnails/thumbnail.jpg`,
+    // iframeUrl: REMOVED - Stream embeds no longer available
+    // webmUrl: REMOVED - Stream transcoding no longer available
+    posterUrl: `https://${cdnDomain}/${uid}/thumbnails/thumbnail.jpg?time=0s`,
+    animatedThumbnailUrl: `https://${cdnDomain}/${uid}/thumbnails/thumbnail.gif`
   };
 }
 
@@ -34,21 +31,21 @@ export function getHybridUrls(uid, sha256, env, r2Available = false) {
   const cdnDomain = env.CDN_DOMAIN || 'cdn.divine.video';
 
   return {
-    // HLS/DASH always from Stream via CDN
-    hlsUrl: `https://${cdnDomain}/${uid}/manifest/video.m3u8`,
-    dashUrl: `https://${cdnDomain}/${uid}/manifest/video.mpd`,
+    // Stream removed - no HLS/DASH support
+    // hlsUrl: REMOVED - Stream no longer available
+    // dashUrl: REMOVED - Stream no longer available
 
     // MP4: Blossom-style URL if available in R2, otherwise fallback
     mp4Url: r2Available && sha256 ?
       `https://${cdnDomain}/${sha256}.mp4` :
       `https://${cdnDomain}/${uid}/downloads/default.mp4`,
 
-    // Thumbnails from Stream via CDN
+    // Thumbnails via Media Transformations API
     thumbnailUrl: `https://${cdnDomain}/${uid}/thumbnails/thumbnail.jpg`,
 
-    // Additional formats
-    iframeUrl: `https://${cdnDomain}/${uid}/iframe`,
-    webmUrl: `https://${cdnDomain}/${uid}/downloads/webm.webm`,
+    // Stream features removed
+    // iframeUrl: REMOVED - Stream embeds no longer available
+    // webmUrl: REMOVED - Stream transcoding no longer available
     posterUrl: `https://${cdnDomain}/${uid}/thumbnails/thumbnail.jpg?time=0s`,
     animatedThumbnailUrl: `https://${cdnDomain}/${uid}/thumbnails/thumbnail.gif`,
 
@@ -89,10 +86,10 @@ export function extractUidFromStreamUrl(url) {
 }
 
 export function normalizeVideoUrl(url, env) {
-  // Convert any video URL to our custom domain
+  // Convert any video URL to our custom domain MP4 URL
   const uid = extractUidFromStreamUrl(url);
   if (uid) {
-    return getStreamUrls(uid, env).hlsUrl;
+    return getStreamUrls(uid, env).mp4Url;
   }
   return url;
 }
