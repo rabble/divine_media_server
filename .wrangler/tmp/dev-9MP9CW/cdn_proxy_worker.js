@@ -560,7 +560,10 @@ async function actuallyFetchFromR2(sha256, env, url, request, startTime) {
   } catch (error) {
     errors++;
     console.error(`\u274C HYBRID CDN: R2 error for ${sha256}:`, error);
-    return new Response("Server error", {
+    console.error(`Error stack:`, error.stack);
+    console.error(`Error name:`, error.name);
+    console.error(`Error message:`, error.message);
+    return new Response(`Server error: ${error.message}`, {
       status: 500,
       headers: {
         "Content-Type": "text/plain",
