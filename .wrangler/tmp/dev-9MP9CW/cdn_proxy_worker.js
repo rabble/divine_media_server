@@ -330,15 +330,19 @@ async function storeInMemoryCache(cacheKey, response) {
 }
 __name(storeInMemoryCache, "storeInMemoryCache");
 function addMonitoringHeaders(response) {
-  response.headers.set("X-CDN-Total-Requests", totalRequests.toString());
-  response.headers.set("X-CDN-Cache-Hits", cacheHits.toString());
-  response.headers.set("X-CDN-Memory-Hits", memoryHits.toString());
-  response.headers.set("X-CDN-R2-Hits", r2Hits.toString());
-  response.headers.set("X-CDN-Rate-Limit-Hits", rateLimitHits.toString());
-  response.headers.set("X-CDN-Error-Count", errors.toString());
-  response.headers.set("X-CDN-Active-R2", activeR2Requests.toString());
-  response.headers.set("X-CDN-Queue-Size", requestQueue.length.toString());
-  response.headers.set("X-CDN-Memory-Cache-Size", memoryCache.size.toString());
+  try {
+    response.headers.set("X-CDN-Total-Requests", totalRequests.toString());
+    response.headers.set("X-CDN-Cache-Hits", cacheHits.toString());
+    response.headers.set("X-CDN-Memory-Hits", memoryHits.toString());
+    response.headers.set("X-CDN-R2-Hits", r2Hits.toString());
+    response.headers.set("X-CDN-Rate-Limit-Hits", rateLimitHits.toString());
+    response.headers.set("X-CDN-Error-Count", errors.toString());
+    response.headers.set("X-CDN-Active-R2", activeR2Requests.toString());
+    response.headers.set("X-CDN-Queue-Size", requestQueue.length.toString());
+    response.headers.set("X-CDN-Memory-Cache-Size", memoryCache.size.toString());
+  } catch (error) {
+    console.log("\u{1F4CA} CDN: Could not add monitoring headers (immutable response)");
+  }
 }
 __name(addMonitoringHeaders, "addMonitoringHeaders");
 function processQueue() {
@@ -542,6 +546,8 @@ async function actuallyFetchFromR2(sha256, env, url, request, startTime) {
           headers.set("Content-Disposition", `inline; filename="${sha256}.mp4"`);
         }
         const response = new Response(r2Object.body, {
+          status: 200,
+          statusText: "OK",
           headers,
           cf: {
             cacheTtl: 31536e3,
@@ -551,11 +557,6 @@ async function actuallyFetchFromR2(sha256, env, url, request, startTime) {
           }
         });
         addMonitoringHeaders(response);
-        const cache = caches.default;
-        const edgeCacheKey = new Request(url.toString(), request);
-        await cache.put(edgeCacheKey, response.clone());
-        const memoryCacheKey = `r2:${sha256}:${url.pathname}`;
-        await storeInMemoryCache(memoryCacheKey, response);
         return response;
       }
     }
@@ -710,10 +711,12 @@ async function checkAndServeImage(sha256, env, url, request, startTime = Date.no
       } else {
         headers.set("Content-Disposition", `inline; filename="${sha256}${extension}"`);
       }
-      const response = new Response(r2Object.body, { headers });
+      const response = new Response(r2Object.body, {
+        status: 200,
+        statusText: "OK",
+        headers
+      });
       addMonitoringHeaders(response);
-      const memoryCacheKey = `r2:${sha256}:${url.pathname}`;
-      await storeInMemoryCache(memoryCacheKey, response);
       return response;
     }
     console.log(`\u274C HYBRID CDN: Image ${sha256} not found in R2`);

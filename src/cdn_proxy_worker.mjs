@@ -176,17 +176,23 @@ async function storeInMemoryCache(cacheKey, response) {
   }
 }
 
-// Add monitoring headers to response
+// Add monitoring headers to response (safely handling immutable headers)
 function addMonitoringHeaders(response) {
-  response.headers.set('X-CDN-Total-Requests', totalRequests.toString());
-  response.headers.set('X-CDN-Cache-Hits', cacheHits.toString());
-  response.headers.set('X-CDN-Memory-Hits', memoryHits.toString());
-  response.headers.set('X-CDN-R2-Hits', r2Hits.toString());
-  response.headers.set('X-CDN-Rate-Limit-Hits', rateLimitHits.toString());
-  response.headers.set('X-CDN-Error-Count', errors.toString());
-  response.headers.set('X-CDN-Active-R2', activeR2Requests.toString());
-  response.headers.set('X-CDN-Queue-Size', requestQueue.length.toString());
-  response.headers.set('X-CDN-Memory-Cache-Size', memoryCache.size.toString());
+  try {
+    // Try to set headers directly (works for mutable headers)
+    response.headers.set('X-CDN-Total-Requests', totalRequests.toString());
+    response.headers.set('X-CDN-Cache-Hits', cacheHits.toString());
+    response.headers.set('X-CDN-Memory-Hits', memoryHits.toString());
+    response.headers.set('X-CDN-R2-Hits', r2Hits.toString());
+    response.headers.set('X-CDN-Rate-Limit-Hits', rateLimitHits.toString());
+    response.headers.set('X-CDN-Error-Count', errors.toString());
+    response.headers.set('X-CDN-Active-R2', activeR2Requests.toString());
+    response.headers.set('X-CDN-Queue-Size', requestQueue.length.toString());
+    response.headers.set('X-CDN-Memory-Cache-Size', memoryCache.size.toString());
+  } catch (error) {
+    // Headers are immutable, log but don't fail the request
+    console.log('📊 CDN: Could not add monitoring headers (immutable response)');
+  }
 }
 
 // Process the request queue
@@ -443,8 +449,10 @@ async function actuallyFetchFromR2(sha256, env, url, request, startTime) {
           headers.set('Content-Disposition', `inline; filename="${sha256}.mp4"`);
         }
 
-        // Create response
+        // Create response with status 200 explicitly
         const response = new Response(r2Object.body, {
+          status: 200,
+          statusText: 'OK',
           headers,
           cf: {
             cacheTtl: 31536000, // Cache for 1 year at edge
@@ -452,16 +460,11 @@ async function actuallyFetchFromR2(sha256, env, url, request, startTime) {
           }
         });
 
+        // Safely add monitoring headers
         addMonitoringHeaders(response);
 
-        // Store in both edge cache and memory cache for next request
-        const cache = caches.default;
-        const edgeCacheKey = new Request(url.toString(), request);
-        await cache.put(edgeCacheKey, response.clone());
-
-        const memoryCacheKey = `r2:${sha256}:${url.pathname}`;
-        await storeInMemoryCache(memoryCacheKey, response);
-
+        // Return response immediately - no async operations after this point
+        // Cloudflare Workers doesn't allow async operations after returning a response
         return response;
       }
     }
@@ -691,13 +694,16 @@ async function checkAndServeImage(sha256, env, url, request, startTime = Date.no
         headers.set('Content-Disposition', `inline; filename="${sha256}${extension}"`);
       }
 
-      const response = new Response(r2Object.body, { headers });
+      const response = new Response(r2Object.body, {
+        status: 200,
+        statusText: 'OK',
+        headers
+      });
+
+      // Safely add monitoring headers
       addMonitoringHeaders(response);
 
-      // Store in memory cache
-      const memoryCacheKey = `r2:${sha256}:${url.pathname}`;
-      await storeInMemoryCache(memoryCacheKey, response);
-
+      // Return response immediately - no async operations after this point
       return response;
     }
 
