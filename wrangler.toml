@@ -6,7 +6,8 @@ account_id = "c84e7a9bf7ed99cb41b8e73566568c75"
 # Default (used by wrangler dev without --env)
 [vars]
 LOOKUPS_ENABLED = true
-STREAM_ACCOUNT_ID = "c84e7a9bf7ed99cb41b8e73566568c75"
+# Stream removed - using R2 only
+DEV_AUTH_MODE = "true"
 STREAM_DOMAIN = "cdn.divine.video"
 R2_PUBLIC_DOMAIN = "r2.divine.video"
 
@@ -21,9 +22,9 @@ name = "cf-stream-service-staging"
 account_id = "c84e7a9bf7ed99cb41b8e73566568c75"
 [env.staging.vars]
 LOOKUPS_ENABLED = true
-STREAM_ACCOUNT_ID = "c84e7a9bf7ed99cb41b8e73566568c75"
+# Stream removed - using R2 only
 DEV_AUTH_MODE = "true"
-STREAM_DOMAIN = "cdn-staging.divine.video"
+STREAM_DOMAIN = "cdn.divine.video"
 R2_PUBLIC_DOMAIN = "r2-staging.divine.video"
 [[env.staging.kv_namespaces]]
 binding = "MEDIA_KV"
@@ -35,13 +36,20 @@ name = "cf-stream-service-prod"
 account_id = "c84e7a9bf7ed99cb41b8e73566568c75"
 [env.production.vars]
 LOOKUPS_ENABLED = true
-STREAM_ACCOUNT_ID = "c84e7a9bf7ed99cb41b8e73566568c75"
+# Stream removed - using R2 only
 CLOUDFLARE_ACCOUNT_ID = "c84e7a9bf7ed99cb41b8e73566568c75"
+# Stream removed - R2 is primary storage
+R2_ONLY_MODE = "true"
 STREAM_DOMAIN = "cdn.divine.video"
 R2_PUBLIC_DOMAIN = "r2.divine.video"
+MODERATION_ENABLED = "true"  # Enable content moderation
 [[env.production.kv_namespaces]]
 binding = "MEDIA_KV"
 id = "effcf271031647f0947983f5f4211aa2"
+# Moderation KV for checking moderation results
+[[env.production.kv_namespaces]]
+binding = "MODERATION_KV"
+id = "eee0689974834390acd39d543002cac3"
 
 # R2 bucket binding for video migration
 [[r2_buckets]]
@@ -58,7 +66,11 @@ bucket_name = "nostrvine-media"
 binding = "R2_VIDEOS"
 bucket_name = "nostrvine-media"
 
+# Production Queue producer for video moderation
+[[env.production.queues.producers]]
+binding = "MODERATION_QUEUE"
+queue = "video-moderation-queue"
+
 # Secrets expected (set per environment with `wrangler secret put ... --env <name>`):
-# - STREAM_API_TOKEN
-# - STREAM_WEBHOOK_SECRET
 # - MIGRATION_ADMIN_TOKEN
+# - MODERATION_ADMIN_TOKEN (for admin blocking endpoints)

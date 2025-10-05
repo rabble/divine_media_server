@@ -8,11 +8,13 @@ import { verifyNip98Request } from "./auth/nip98.mjs";
 import { listUserVideos } from "./handlers/users.mjs";
 import { migrateVideo } from "./handlers/migrate.mjs";
 import { migrateBatch } from "./handlers/migrate_batch.mjs";
-import { migrateFromR2, migrateR2Batch, listR2Videos } from "./handlers/migrate_r2.mjs";
+// Removed old R2 migration handlers - using hybrid dual storage now
 import { handleOpenVineMigration, handleOpenVineBatchMigration } from "./handlers/migrate_openvine.mjs";
 import { enableDownloads, enableDownloadsBatch } from "./handlers/enable_downloads.mjs";
 import { homePage } from "./handlers/home.mjs";
 import { getBlobByHash, headBlobByHash, blossomUpload, listUserBlobs, deleteBlobByHash } from "./handlers/blossom.mjs";
+import { listAllVideoUIDs } from "./handlers/list_all_videos.mjs";
+import { blockVideo, unblockVideo, listBlocked, checkBlock, blockBulk, tempBlock } from "./handlers/moderation_admin.mjs";
 
 const router = createRouter([
   { method: "GET", path: /^\/$/, handler: homePage },
@@ -31,13 +33,19 @@ const router = createRouter([
   { method: "GET", path: /^\/v1\/users\/.+\/videos$/, handler: listUserVideos },
   { method: "POST", path: /^\/v1\/migrate$/, handler: migrateVideo },
   { method: "POST", path: /^\/v1\/migrate\/batch$/, handler: migrateBatch },
-  { method: "POST", path: /^\/v1\/r2\/migrate$/, handler: migrateFromR2 },
-  { method: "POST", path: /^\/v1\/r2\/migrate-batch$/, handler: migrateR2Batch },
-  { method: "GET", path: /^\/v1\/r2\/list$/, handler: listR2Videos },
+  // Removed old R2 migration routes - using hybrid dual storage now
   { method: "POST", path: /^\/v1\/openvine\/migrate$/, handler: handleOpenVineMigration },
   { method: "POST", path: /^\/v1\/openvine\/migrate-batch$/, handler: handleOpenVineBatchMigration },
   { method: "POST", path: /^\/v1\/enable-downloads\/.+$/, handler: enableDownloads },
   { method: "POST", path: /^\/v1\/enable-downloads-batch$/, handler: enableDownloadsBatch },
+  { method: "GET", path: /^\/v1\/list-all-uids/, handler: listAllVideoUIDs },
+  // Moderation admin endpoints
+  { method: "POST", path: /^\/admin\/block\/[a-f0-9]{64}$/, handler: blockVideo },
+  { method: "POST", path: /^\/admin\/unblock\/[a-f0-9]{64}$/, handler: unblockVideo },
+  { method: "GET", path: /^\/admin\/blocked$/, handler: listBlocked },
+  { method: "GET", path: /^\/admin\/check\/[a-f0-9]{64}$/, handler: checkBlock },
+  { method: "POST", path: /^\/admin\/block-bulk$/, handler: blockBulk },
+  { method: "POST", path: /^\/admin\/temp-block\/[a-f0-9]{64}$/, handler: tempBlock },
 ]);
 
 export function createApp(env, deps) {
@@ -86,7 +94,7 @@ export function createApp(env, deps) {
 }
 
 export default {
-  fetch: (req, env) => createApp(env)(req),
+  fetch: (req, env, ctx) => createApp(env, ctx)(req),
 };
 
 function timingSafeEqual(a, b) {

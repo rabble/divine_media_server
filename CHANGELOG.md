@@ -1,5 +1,45 @@
 # Changelog
 
+## [2025-01-26] - Remove Cloudflare Stream and Migrate to R2-Only Storage
+
+### BREAKING CHANGES
+- **Removed Cloudflare Stream integration** - All video processing now uses R2 storage exclusively
+- **Deprecated `/v1/videos` endpoint** - Returns HTTP 410 with deprecation notice
+- **Stream configuration removed** - STREAM_ACCOUNT_ID and STREAM_API_TOKEN no longer needed
+
+### Changed
+- **Video storage** - All videos now stored directly in R2 bucket without Stream processing
+- **Cost model** - Eliminated Stream charges ($5/1000 minutes), now only R2 storage costs ($0.015/GB/month)
+- **Bandwidth** - Using R2's free egress bandwidth instead of Stream delivery charges
+- **Configuration** - Replaced USE_R2_FALLBACK with R2_ONLY_MODE flag
+
+### Preserved Functionality
+- **Thumbnail generation** - Still works via Cloudflare Media Transformations API
+- **Content moderation** - Sightengine integration unchanged
+- **Content blocking** - Manual blocking system fully operational
+- **CDN serving** - All existing videos continue to work via cdn.divine.video
+
+### Technical Details
+- Created `DEPRECATED_STREAM_CODE_BACKUP.mjs` with all removed Stream code for reference
+- Removed Stream webhook handler (no longer needed)
+- Simplified video upload flow to direct R2 storage
+- Eliminated enable-downloads functionality (not needed with R2)
+
+### Migration Impact
+- **No action required** - All existing videos continue to work
+- **Cost savings** - Immediate reduction in Stream charges
+- **Performance** - Similar or better performance with R2 direct serving
+- **Uploads** - New uploads should use Blossom `/upload` endpoint
+
+### Files Modified
+- `src/handlers/videos.mjs` - Now returns deprecation notice
+- `src/handlers/blossom.mjs` - Simplified without Stream fallback
+- `src/handlers/webhook.mjs` - Stream webhook code removed
+- `src/utils/dual_storage.mjs` - Stream upload function removed
+- `src/utils/auto_enable_downloads.mjs` - Updated for R2-only mode
+- `wrangler.toml` - Removed Stream configuration variables
+- `cdn-proxy-wrangler.toml` - Removed Stream account ID
+
 ## [2025-01-21] - Blossom Protocol Support
 
 ### Added

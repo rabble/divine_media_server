@@ -3,6 +3,30 @@ main = "src/cdn_proxy_worker.mjs"
 compatibility_date = "2024-08-01"
 account_id = "c84e7a9bf7ed99cb41b8e73566568c75"
 
+# Environment variables
+[vars]
+LOOKUPS_ENABLED = true
+# Stream removed - using R2 only
+# STREAM_CUSTOMER_DOMAIN kept for fallback compatibility
+STREAM_CUSTOMER_DOMAIN = "customer-4c3uhd5qzuhwz9hu.cloudflarestream.com"
+STREAM_DOMAIN = "cdn.divine.video"
+R2_PUBLIC_DOMAIN = "r2.divine.video"
+
+# KV namespace for video metadata
+[[kv_namespaces]]
+binding = "MEDIA_KV"
+id = "effcf271031647f0947983f5f4211aa2"
+
+# Moderation KV for checking quarantine status
+[[kv_namespaces]]
+binding = "MODERATION_KV"
+id = "eee0689974834390acd39d543002cac3"
+
+# R2 bucket for video storage
+[[r2_buckets]]
+binding = "R2_VIDEOS"
+bucket_name = "nostrvine-media"
+
 # Production route for cdn.divine.video
 [[routes]]
 pattern = "cdn.divine.video/*"
@@ -12,3 +36,7 @@ zone_name = "divine.video"
 [[routes]]
 pattern = "cdn-staging.divine.video/*"
 zone_name = "divine.video"
+
+# Enable observability logging (requires wrangler v3.88.0+)
+[observability.logs]
+enabled = true

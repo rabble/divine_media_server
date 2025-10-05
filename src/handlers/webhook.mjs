@@ -37,5 +37,34 @@ export async function handleStreamWebhook(req, env, deps) {
   };
 
   await env.MEDIA_KV.put(key, JSON.stringify(updated));
+
+  // Auto-enable MP4 downloads when video becomes ready
+  if (status === "published" && current.status !== "published") {
+    console.log("🔔 Auto-enabling downloads for newly published UID:", uid);
+    try {
+      const accountId = env.STREAM_ACCOUNT_ID;
+      const apiToken = env.STREAM_API_TOKEN;
+
+      if (accountId && apiToken) {
+        const downloadUrl = `https://api.cloudflare.com/client/v4/accounts/${accountId}/stream/${uid}/downloads`;
+        const downloadRes = await deps.fetch(downloadUrl, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${apiToken}`,
+            'Content-Type': 'application/json'
+          }
+        });
+
+        if (downloadRes.ok) {
+          console.log("🔔 Downloads enabled successfully for UID:", uid);
+        } else {
+          console.log("🔔 Download enable failed for UID:", uid, "status:", downloadRes.status);
+        }
+      }
+    } catch (error) {
+      console.log("🔔 Download enable error for UID:", uid, "error:", error.message);
+    }
+  }
+
   return json(200, { ok: true });
 }

@@ -1,74 +1,59 @@
 // ABOUTME: Handler to enable MP4 downloads for migrated Stream videos
 // ABOUTME: Must be called after migration to make videos downloadable
 
+import { enableDownloadsWithRetry } from '../utils/auto_enable_downloads.mjs';
+
 export async function enableDownloads(request, env) {
   try {
     const url = new URL(request.url);
     const uid = url.pathname.split('/').pop();
-    
+
     if (!uid || uid.length !== 32) {
-      return new Response(JSON.stringify({ 
+      return new Response(JSON.stringify({
         error: 'invalid_uid',
-        message: 'Please provide a valid 32-character Stream UID' 
+        message: 'Please provide a valid 32-character Stream UID'
       }), {
         status: 400,
         headers: { 'Content-Type': 'application/json' }
       });
     }
 
-    // Enable downloads via Stream API
-    const accountId = env.CLOUDFLARE_ACCOUNT_ID || env.STREAM_ACCOUNT_ID;
-    const apiToken = env.CLOUDFLARE_API_TOKEN || env.STREAM_API_TOKEN;
-    
-    const streamApiUrl = `https://api.cloudflare.com/client/v4/accounts/${accountId}/stream/${uid}/downloads`;
-    
-    const response = await fetch(streamApiUrl, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiToken}`,
-        'Content-Type': 'application/json'
-      }
+    // Use reliable auto-enable utility
+    const result = await enableDownloadsWithRetry(uid, env, { fetch: fetch.bind(globalThis) }, {
+      logPrefix: "🔧 MANUAL",
+      initialDelay: 2000,  // Shorter delay for manual requests
+      maxRetries: 2        // Fewer retries for individual requests
     });
 
-    const data = await response.json();
-    
-    if (!response.ok) {
-      return new Response(JSON.stringify({ 
-        error: 'stream_api_error',
-        message: data.errors?.[0]?.message || 'Failed to enable downloads',
-        details: data
+    if (result.success) {
+      return new Response(JSON.stringify({
+        success: true,
+        uid: uid,
+        attempts: result.attempt,
+        mp4Url: `https://${env.STREAM_DOMAIN || 'customer-4c3uhd5qzuhwz9hu.cloudflarestream.com'}/${uid}/downloads/default.mp4`,
+        message: `Downloads enabled successfully (attempt ${result.attempt})`
       }), {
-        status: response.status,
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    } else {
+      return new Response(JSON.stringify({
+        error: 'enable_failed',
+        uid: uid,
+        attempts: result.attempts,
+        message: result.error,
+        lastResponse: result.lastResponse
+      }), {
+        status: 502,
         headers: { 'Content-Type': 'application/json' }
       });
     }
 
-    // Check download status
-    const statusResponse = await fetch(streamApiUrl, {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${apiToken}`
-      }
-    });
-
-    const statusData = await statusResponse.json();
-
-    return new Response(JSON.stringify({
-      success: true,
-      uid: uid,
-      download: statusData.result?.default || data.result,
-      mp4Url: `https://${env.STREAM_DOMAIN || 'customer-4c3uhd5qzuhwz9hu.cloudflarestream.com'}/${uid}/downloads/default.mp4`,
-      message: 'Downloads enabled successfully'
-    }), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' }
-    });
-
   } catch (error) {
     console.error('Enable downloads error:', error);
-    return new Response(JSON.stringify({ 
+    return new Response(JSON.stringify({
       error: 'server_error',
-      message: error.message 
+      message: error.message
     }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' }
@@ -76,50 +61,52 @@ export async function enableDownloads(request, env) {
   }
 }
 
-// Batch enable downloads for multiple videos
+// Batch enable downloads for multiple videos using reliable utility
 export async function enableDownloadsBatch(request, env) {
   try {
     const { uids } = await request.json();
-    
+
     if (!Array.isArray(uids) || uids.length === 0) {
-      return new Response(JSON.stringify({ 
+      return new Response(JSON.stringify({
         error: 'invalid_request',
-        message: 'Please provide an array of UIDs' 
+        message: 'Please provide an array of UIDs'
       }), {
         status: 400,
         headers: { 'Content-Type': 'application/json' }
       });
     }
 
+    console.log(`🔧 BATCH: Starting batch enable for ${uids.length} UIDs`);
+
     const results = [];
     const errors = [];
+    const deps = { fetch: fetch.bind(globalThis) };
 
-    const accountId = env.CLOUDFLARE_ACCOUNT_ID || env.STREAM_ACCOUNT_ID;
-    const apiToken = env.CLOUDFLARE_API_TOKEN || env.STREAM_API_TOKEN;
-    
-    for (const uid of uids) {
+    // Process each UID with proper retry logic
+    for (const [index, uid] of uids.entries()) {
+      console.log(`🔧 BATCH: Processing ${index + 1}/${uids.length} - UID: ${uid}`);
+
       try {
-        const streamApiUrl = `https://api.cloudflare.com/client/v4/accounts/${accountId}/stream/${uid}/downloads`;
-        
-        const response = await fetch(streamApiUrl, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${apiToken}`,
-            'Content-Type': 'application/json'
-          }
+        const result = await enableDownloadsWithRetry(uid, env, deps, {
+          logPrefix: `🔧 BATCH[${index + 1}/${uids.length}]`,
+          initialDelay: 3000,  // Reasonable delay for batch processing
+          maxRetries: 3,       // Standard retries for batch
+          retryDelay: 5000     // 5s between retries
         });
 
-        if (response.ok) {
+        if (result.success) {
           results.push({
             uid: uid,
             success: true,
+            attempts: result.attempt,
             mp4Url: `https://${env.STREAM_DOMAIN || 'customer-4c3uhd5qzuhwz9hu.cloudflarestream.com'}/${uid}/downloads/default.mp4`
           });
         } else {
-          const errorData = await response.json();
           errors.push({
             uid: uid,
-            error: errorData.errors?.[0]?.message || 'Failed to enable downloads'
+            error: result.error,
+            attempts: result.attempts,
+            lastResponse: result.lastResponse
           });
         }
       } catch (error) {
@@ -128,7 +115,12 @@ export async function enableDownloadsBatch(request, env) {
           error: error.message
         });
       }
+
+      // Small delay between UIDs to avoid overwhelming the API
+      await new Promise(resolve => setTimeout(resolve, 500));
     }
+
+    console.log(`🔧 BATCH: Completed - ${results.length} enabled, ${errors.length} failed`);
 
     return new Response(JSON.stringify({
       success: true,
@@ -143,9 +135,9 @@ export async function enableDownloadsBatch(request, env) {
 
   } catch (error) {
     console.error('Batch enable downloads error:', error);
-    return new Response(JSON.stringify({ 
+    return new Response(JSON.stringify({
       error: 'server_error',
-      message: error.message 
+      message: error.message
     }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' }

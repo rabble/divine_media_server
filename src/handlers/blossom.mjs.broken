@@ -1,0 +1,684 @@
+// ABOUTME: Blossom protocol handlers for blob storage and retrieval
+// ABOUTME: Implements core Blossom endpoints using existing video infrastructure
+
+import { json } from "../router.mjs";
+import { getStreamUrls } from "../utils/stream_urls.mjs";
+import { enableDownloadsAsync } from "../utils/auto_enable_downloads.mjs";
+
+/**
+ * GET /<sha256> - Retrieve blob by SHA-256 hash
+ */
+export async function getBlobByHash(req, env, deps) {
+  const url = new URL(req.url);
+  const pathMatch = url.pathname.match(/^\/([a-f0-9]{64})(\.[a-z0-9]+)?$/);
+  if (!pathMatch) {
+    return json(400, { error: "invalid_hash" });
+  }
+
+  const sha256 = pathMatch[1];
+
+  // Look up video by SHA-256 hash
+  const indexData = await env.MEDIA_KV.get(`idx:sha256:${sha256}`);
+  if (!indexData) {
+    return new Response("Not Found", { status: 404 });
+  }
+
+  try {
+    const { uid } = JSON.parse(indexData);
+    const videoData = await env.MEDIA_KV.get(`video:${uid}`);
+    if (!videoData) {
+      return new Response("Not Found", { status: 404 });
+    }
+
+    const video = JSON.parse(videoData);
+    if (video.status !== 'ready') {
+      return new Response("Not Ready", { status: 202 });
+    }
+
+    // Get the playback URL and redirect
+    const { hlsUrl } = getStreamUrls(uid, env);
+    return Response.redirect(hlsUrl, 302);
+
+  } catch (error) {
+    return new Response("Server Error", { status: 500 });
+  }
+}
+
+/**
+ * HEAD /<sha256> - Check if blob exists
+ */
+export async function headBlobByHash(req, env, deps) {
+  const url = new URL(req.url);
+  const pathMatch = url.pathname.match(/^\/([a-f0-9]{64})(\.[a-z0-9]+)?$/);
+  if (!pathMatch) {
+    return new Response(null, { status: 400 });
+  }
+
+  const sha256 = pathMatch[1];
+
+  // Look up video by SHA-256 hash
+  const indexData = await env.MEDIA_KV.get(`idx:sha256:${sha256}`);
+  if (!indexData) {
+    return new Response(null, { status: 404 });
+  }
+
+  try {
+    const { uid } = JSON.parse(indexData);
+    const videoData = await env.MEDIA_KV.get(`video:${uid}`);
+    if (!videoData) {
+      return new Response(null, { status: 404 });
+    }
+
+    const video = JSON.parse(videoData);
+    if (video.status !== 'ready') {
+      return new Response(null, { status: 202 });
+    }
+
+    return new Response(null, { status: 200 });
+
+  } catch (error) {
+    return new Response(null, { status: 500 });
+  }
+}
+
+/**
+ * PUT /upload - Blossom blob upload
+ */
+export async function blossomUpload(req, env, deps) {
+  console.log("🌸 Blossom upload started");
+
+  // Verify Blossom auth (kind 24242 event)
+  const auth = await verifyBlossomAuth(req, deps);
+  if (!auth) {
+    console.log("🌸 Auth failed, but continuing for debug...");
+    // Continue with debug info even if auth fails for now
+    // return json(401, { error: "unauthorized" });
+  }
+
+  if (auth) {
+    console.log("🌸 Auth succeeded, pubkey:", auth.pubkey);
+  }
+
+  // Detect upload type: JSON metadata (Option 1) or binary data (Option 2)
+  const contentType = req.headers.get('content-type') || '';
+  const isJsonRequest = contentType.includes('application/json');
+
+  console.log("🌸 Content-Type:", contentType);
+  console.log("🌸 Is JSON request:", isJsonRequest);
+
+  if (isJsonRequest) {
+    // OPTION 1: Standard two-step Blossom (return upload URL)
+    console.log("🌸 Processing JSON request (Option 1)");
+    const body = await req.text();
+    let metadata = {};
+
+    try {
+      metadata = JSON.parse(body);
+      console.log("🌸 Parsed metadata:", metadata);
+    } catch (error) {
+      console.log("🌸 JSON parse error:", error.message);
+      return json(400, { error: "bad_request", reason: "invalid_json" });
+    }
+
+    // Check if blob already exists by SHA-256
+    if (metadata.sha256) {
+      console.log("🌸 Checking for existing blob with SHA-256:", metadata.sha256);
+      const existingIndex = await env.MEDIA_KV.get(`idx:sha256:${metadata.sha256}`);
+      if (existingIndex) {
+        console.log("🌸 Found existing blob, returning descriptor");
+        const { uid } = JSON.parse(existingIndex);
+        const videoData = await env.MEDIA_KV.get(`video:${uid}`);
+        if (videoData) {
+          const video = JSON.parse(videoData);
+          if (video.status === 'ready') {
+            // Return existing blob descriptor per Blossom spec
+            const urls = getStreamUrls(uid, env);
+            return json(200, {
+              sha256: metadata.sha256,
+              size: video.size || metadata.size,
+              type: metadata.type || "video/mp4",
+              uploaded: Math.floor(video.createdAt / 1000),
+              url: urls.mp4Url,
+              hls: urls.hlsUrl,
+              thumbnail: urls.thumbnailUrl
+            });
+          }
+        }
+      }
+    }
+
+    // Create a new request for the video handler with dev auth bypass
+    // If auth failed, use a default pubkey for development mode
+    const pubkeyToUse = auth?.pubkey || 'anonymous';
+    const videoReq = new Request(req.url.replace('/upload', '/v1/videos'), {
+      method: 'POST',
+      headers: {
+        'Authorization': `Nostr pubkey=${pubkeyToUse}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        ...metadata,
+        name: metadata.name || metadata.filename || `blossom-${metadata.sha256?.substring(0, 8) || 'upload'}.mp4`
+      })
+    });
+
+    // Import and call the video handler
+    const { createVideo } = await import('./videos.mjs');
+    const result = await createVideo(videoReq, env, deps);
+
+    if (result.status === 200) {
+      const data = await result.json();
+
+      // Generate the CDN URLs for the response
+      const urls = getStreamUrls(data.uid, env);
+
+      // Return Blossom-compliant response with both upload URL and final CDN URLs
+      // This allows the client to know where the file will be accessible after upload
+      return json(200, {
+        // Upload info (client needs this to upload the file)
+        uploadURL: data.uploadURL,
+        uid: data.uid,
+        expiresAt: data.expiresAt,
+
+        // Blossom BUD-01 compliant fields (where file will be accessible)
+        sha256: metadata.sha256 || null,  // Will be calculated after upload
+        url: urls.mp4Url,  // Final CDN URL for the video
+        type: metadata.type || "video/mp4",
+        size: metadata.size || null,
+
+        // Additional helpful URLs
+        hls: urls.hlsUrl,
+        thumbnail: urls.thumbnailUrl
+      });
+    }
+
+    return result;
+
+  } else {
+    // OPTION 2: Single-step binary upload (current Flutter app)
+    console.log("🌸 Processing binary upload (Option 2)");
+    let blob;
+    let fileSize;
+    try {
+      console.log("🌸 Reading request as ArrayBuffer...");
+      blob = await req.arrayBuffer();
+      fileSize = blob.byteLength;
+      console.log("🌸 ArrayBuffer read successfully, size:", fileSize, "bytes");
+    } catch (error) {
+      console.log("🌸 ArrayBuffer read error:", error.message);
+      return json(400, { error: "bad_request", reason: "cannot_read_body" });
+    }
+
+    // Calculate SHA-256 hash of the uploaded file
+    const hashBuffer = await crypto.subtle.digest('SHA-256', blob);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    const sha256 = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+
+    // Detect content type - check for images vs videos
+    const detectedContentType = contentType || detectContentTypeFromBlob(blob);
+    console.log("🌸 Detected content type:", detectedContentType);
+
+    // Check if this is an image upload
+    const { isImageContentType } = await import('../utils/image_storage.mjs');
+    if (isImageContentType(detectedContentType)) {
+      console.log("🌸 Processing as IMAGE upload");
+      return await handleImageUpload(blob, sha256, detectedContentType, auth, env, deps);
+    }
+
+    // Continue with video processing for non-images
+    console.log("🌸 Processing as VIDEO upload");
+
+    // Always use R2 storage (Stream has been removed for cost savings)
+    console.log("🌸 Using R2 storage for binary upload");
+
+      // Store directly in R2 bucket
+      const r2Key = `${sha256}.mp4`;
+
+      try {
+        // Store in R2 bucket
+        await env.R2_VIDEOS.put(r2Key, blob, {
+          httpMetadata: {
+            contentType: detectedContentType,
+          },
+          customMetadata: {
+            sha256,
+            uploadedAt: new Date().toISOString(),
+            uploadedBy: auth?.pubkey || 'anonymous',
+            uploadedVia: 'blossom_r2_fallback'
+          }
+        });
+
+        console.log("🌸 Stored in R2:", r2Key);
+
+        // Store metadata in KV
+        const uid = `r2_${sha256.substring(0, 16)}`;
+        const metadata = {
+          uid,
+          sha256,
+          size: fileSize,
+          type: detectedContentType,
+          uploadedAt: Date.now(),
+          uploadedBy: auth?.pubkey || 'anonymous',
+          r2Key,
+          status: 'ready',
+          downloadEnabled: true
+        };
+
+        await env.MEDIA_KV.put(`video:${uid}`, JSON.stringify(metadata));
+        await env.MEDIA_KV.put(`idx:sha256:${sha256}`, JSON.stringify({ uid, r2Key }));
+
+        console.log("🌸 Metadata stored for UID:", uid);
+
+        // Trigger content moderation (non-blocking)
+        if (env.MODERATION_ENABLED === 'true' && env.MODERATION_QUEUE) {
+          console.log("🛡️ Triggering content moderation for:", sha256);
+          const moderationPromise = env.MODERATION_QUEUE.send({
+            sha256,
+            r2Key,
+            uploadedBy: auth?.pubkey || 'anonymous',
+            uploadedAt: Date.now(),
+            metadata: {
+              fileSize,
+              contentType: detectedContentType,
+              duration: 6  // Default to 6 seconds for Vine-style videos
+            }
+          }).catch(error => {
+            console.error("🛡️ Failed to queue moderation:", error);
+            // Don't fail the upload if moderation queueing fails
+          });
+
+          // Use waitUntil if available (in Worker context), otherwise just fire and forget
+          if (deps && typeof deps.waitUntil === 'function') {
+            deps.waitUntil(moderationPromise);
+          } else {
+            console.log("🛡️ waitUntil not available, moderation will run synchronously");
+            // Fire and forget - moderation will still run
+          }
+        }
+
+        // Return Blossom-compliant response with CDN URLs
+        const cdnDomain = env.CDN_DOMAIN || 'cdn.divine.video';
+        const uploadTimestamp = Math.floor(Date.now() / 1000);
+
+        return json(200, {
+          sha256,
+          url: `https://${cdnDomain}/${sha256}`,
+          size: fileSize,
+          type: detectedContentType,
+          uploaded: uploadTimestamp,  // Unix timestamp as integer per BUD-02
+          // Additional URLs for compatibility
+          cdn_url: `https://${cdnDomain}/${sha256}.mp4`,
+          direct_url: `https://${cdnDomain}/${sha256}.mp4`,
+          // For Stream compatibility (even though it's R2)
+          uid,
+          // Note: HLS not available for R2-only storage
+          hls: null,
+          // Use placeholder thumbnail service or null if client handles it
+          thumbnail: null  // Client should generate thumbnail locally
+        });
+
+      } catch (error) {
+        console.error("🌸 R2 storage error:", error);
+        return json(500, {
+          error: "storage_error",
+          reason: "r2_put_failed",
+          details: error.message
+        });
+    }
+  }
+
+  // Handle non-video files (images, etc)
+  if (contentType && contentType.startsWith('image/')) {
+    return handleImageUpload(blob, sha256, contentType, auth, env, deps);
+  }
+
+  // Unsupported file type
+  return json(400, {
+    error: "unsupported_type",
+    message: "Only video and image files are supported",
+    received: contentType
+  });
+}
+
+/**
+ * List user's uploaded blobs
+ */
+export async function listUserBlobs(req, env, deps) {
+  const url = new URL(req.url);
+  const pathMatch = url.pathname.match(/^\/list\/([a-f0-9]{64})$/);
+  if (!pathMatch) {
+        maxDurationSeconds: 21600, // 6 hours max
+        requireSignedURLs: false,
+        allowedOrigins: ["*"]
+        // Removed webhookUrl and meta to debug Stream API error
+      }),
+    });
+
+    if (!createRes.ok) {
+      const errorText = await createRes.text();
+      console.log("🌸 Stream API error:", {
+        status: createRes.status,
+        error: errorText
+      });
+
+      // If Stream API fails, fall back to R2
+      if (createRes.status === 403 || createRes.status === 401) {
+        console.log("🌸 Stream API auth failed, using R2 fallback");
+        env.USE_R2_FALLBACK = 'true';
+        return handleBlossomUpload(req, env, deps);
+      }
+
+      // Try to parse error for better message
+      let errorDetails = {};
+      try {
+        errorDetails = JSON.parse(errorText);
+      } catch (e) {
+        errorDetails = { message: errorText };
+      }
+
+      return json(502, {
+        error: "stream_error",
+        status: createRes.status,
+        details: errorDetails.errors?.[0]?.message || errorDetails.message || "Unknown Stream API error"
+      });
+    }
+
+    const createData = await createRes.json();
+    const uploadURL = createData?.result?.uploadURL;
+    const uid = createData?.result?.uid;
+
+    if (!uploadURL || !uid) {
+      return json(502, { error: "stream_error", reason: "missing_upload_url" });
+    }
+
+    // Upload the blob directly to Stream
+    console.log("🌸 Uploading blob to Stream URL:", uploadURL);
+    const uploadRes = await deps.fetch(uploadURL, {
+      method: 'PUT',
+      body: blob,
+      headers: {
+        'Content-Length': fileSize.toString(),
+        'Content-Type': 'video/mp4' // Assume MP4 for now
+      }
+    });
+
+    console.log("🌸 Stream upload result:", {
+      status: uploadRes.status,
+      statusText: uploadRes.statusText,
+      headers: Object.fromEntries([...uploadRes.headers.entries()])
+    });
+
+    if (!uploadRes.ok) {
+      console.log("🌸 Stream upload failed:", {
+        status: uploadRes.status,
+        statusText: uploadRes.statusText
+      });
+      return json(502, { error: "upload_error", status: uploadRes.status });
+    }
+
+    console.log("🌸 Stream upload successful for UID:", uid);
+
+    // Auto-enable MP4 downloads using reliable utility
+    enableDownloadsAsync(uid, env, deps, { logPrefix: "🌸" });
+
+    // Store in KV
+    const record = {
+      status: "uploading",
+      owner: auth?.pubkey || 'anonymous',
+      createdAt: deps.now(),
+      uploadedVia: "blossom_direct",
+      sha256,
+      size: fileSize,
+    };
+
+    await env.MEDIA_KV.put(`video:${uid}`, JSON.stringify(record));
+
+    // Create indexes
+    await env.MEDIA_KV.put(`idx:sha256:${sha256}`, JSON.stringify({ uid }));
+    await env.MEDIA_KV.put(`idx:pubkey:${auth?.pubkey || 'anonymous'}:${uid}`, '1');
+
+    // Get URLs for response
+    const urls = getStreamUrls(uid, env);
+
+    // Return Blossom-compliant blob descriptor
+    const cdnDomain = env.CDN_DOMAIN || 'cdn.divine.video';
+    const uploadTimestamp = Math.floor(Date.now() / 1000);
+
+    return json(200, {
+      sha256,
+      url: `https://${cdnDomain}/${sha256}`,
+      size: fileSize,
+      type: "video/mp4",
+      uploaded: uploadTimestamp,  // Unix timestamp as integer per BUD-02
+      // Additional fields for compatibility
+      cdn_url: urls.mp4Url,
+      direct_url: urls.mp4Url,
+      uid,
+      hls: urls.hlsUrl,
+      thumbnail: urls.thumbnailUrl
+    });
+  }
+}
+
+/**
+ * GET /list/<pubkey> - List blobs for a public key
+ */
+export async function listUserBlobs(req, env, deps) {
+  const url = new URL(req.url);
+  const pathMatch = url.pathname.match(/^\/list\/([a-f0-9]{64})$/);
+  if (!pathMatch) {
+    return json(400, { error: "invalid_pubkey" });
+  }
+
+  const pubkey = pathMatch[1];
+
+  // Optional auth check
+  const auth = await verifyBlossomAuth(req, deps);
+  const isOwner = auth?.pubkey === pubkey;
+
+  try {
+    // List all videos for this pubkey
+    const listResult = await env.MEDIA_KV.list({ prefix: `idx:pubkey:${pubkey}:` });
+    const blobs = [];
+
+    for (const key of listResult.keys) {
+      const uid = key.name.split(':').pop();
+      const videoData = await env.MEDIA_KV.get(`video:${uid}`);
+      if (!videoData) continue;
+
+      const video = JSON.parse(videoData);
+
+      // Only include ready videos
+      if (video.status !== 'ready') continue;
+
+      const blob = {
+        sha256: video.sha256,
+        size: video.size || null,
+        type: "video",
+        uploaded: Math.floor(video.createdAt / 1000)
+      };
+
+      // Only include SHA-256 if available
+      if (blob.sha256) {
+        blobs.push(blob);
+      }
+    }
+
+    return json(200, blobs);
+
+  } catch (error) {
+    return json(500, { error: "server_error" });
+  }
+}
+
+/**
+ * DELETE /<sha256> - Delete blob by hash
+ */
+export async function deleteBlobByHash(req, env, deps) {
+  const url = new URL(req.url);
+  const pathMatch = url.pathname.match(/^\/([a-f0-9]{64})(\.[a-z0-9]+)?$/);
+  if (!pathMatch) {
+    return json(400, { error: "invalid_hash" });
+  }
+
+  const sha256 = pathMatch[1];
+
+  // Verify auth
+  const auth = await verifyBlossomAuth(req, deps);
+  if (!auth) {
+    return json(401, { error: "unauthorized" });
+  }
+
+  // Look up video by SHA-256
+  const indexData = await env.MEDIA_KV.get(`idx:sha256:${sha256}`);
+  if (!indexData) {
+    return json(404, { error: "not_found" });
+  }
+
+  try {
+    const { uid } = JSON.parse(indexData);
+    const videoData = await env.MEDIA_KV.get(`video:${uid}`);
+    if (!videoData) {
+      return json(404, { error: "not_found" });
+    }
+
+    const video = JSON.parse(videoData);
+
+    // Check ownership
+    if (video.owner !== auth.pubkey) {
+      return json(403, { error: "forbidden" });
+    }
+
+    // Delete from Cloudflare Stream
+    const accountId = env.STREAM_ACCOUNT_ID;
+    const apiToken = env.STREAM_API_TOKEN;
+
+    if (accountId && apiToken && !env.MOCK_STREAM_API) {
+      const deleteUrl = `https://api.cloudflare.com/client/v4/accounts/${accountId}/stream/${uid}`;
+      await deps.fetch(deleteUrl, {
+        method: "DELETE",
+        headers: { "Authorization": `Bearer ${apiToken}` }
+      });
+    }
+
+    // Delete from KV
+    await Promise.all([
+      env.MEDIA_KV.delete(`video:${uid}`),
+      env.MEDIA_KV.delete(`idx:sha256:${sha256}`),
+      env.MEDIA_KV.delete(`idx:pubkey:${video.owner}:${uid}`)
+    ]);
+
+    return new Response(null, { status: 204 });
+
+  } catch (error) {
+    return json(500, { error: "server_error" });
+  }
+}
+
+/**
+ * Handle image upload via R2-only storage
+ */
+async function handleImageUpload(blob, sha256, contentType, auth, env, deps) {
+  console.log("📸 BLOSSOM: Starting image upload for SHA-256:", sha256);
+
+  // Check if image already exists
+  const existingIndex = await env.MEDIA_KV.get(`idx:sha256:${sha256}`);
+  if (existingIndex) {
+    console.log("📸 BLOSSOM: Found existing image, returning descriptor");
+    const existing = JSON.parse(existingIndex);
+    if (existing.type === 'image') {
+      const imageData = await env.MEDIA_KV.get(`image:${sha256}`);
+      if (imageData) {
+        const image = JSON.parse(imageData);
+        const cdnDomain = env.STREAM_DOMAIN || 'cdn.divine.video';
+        const extension = getExtensionFromMimeType(contentType);
+
+        return json(200, {
+          sha256,
+          size: image.size,
+          type: contentType,
+          uploaded: Math.floor(image.createdAt / 1000),
+          url: `https://${cdnDomain}/${sha256}${extension}`
+        });
+      }
+    }
+  }
+
+  // Store image in R2
+  const { storeImageInR2 } = await import('../utils/image_storage.mjs');
+  const storeResult = await storeImageInR2(blob, sha256, contentType, env, {
+    owner: auth?.pubkey || 'anonymous',
+    filename: `image-${sha256.substring(0, 8)}${getExtensionFromMimeType(contentType)}`
+  }, deps);
+
+  if (!storeResult.success) {
+    console.error("📸 BLOSSOM: Image storage failed:", storeResult.errors);
+    return json(500, {
+      error: "storage_error",
+      details: storeResult.errors
+    });
+  }
+
+  console.log("✅ BLOSSOM: Image stored successfully:", sha256);
+
+  // Return Blossom-compliant descriptor
+  return json(200, {
+    sha256,
+    size: blob.byteLength,
+    type: contentType,
+    uploaded: Math.floor(Date.now() / 1000),
+    url: storeResult.urls.url
+  });
+}
+
+/**
+ * Detect content type from blob data (magic bytes)
+ */
+function detectContentTypeFromBlob(blob) {
+  const bytes = new Uint8Array(blob.slice(0, 16));
+
+  // Check magic bytes for common image formats
+  if (bytes[0] === 0xFF && bytes[1] === 0xD8 && bytes[2] === 0xFF) {
+    return 'image/jpeg';
+  }
+  if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4E && bytes[3] === 0x47) {
+    return 'image/png';
+  }
+  if (bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46) {
+    return 'image/gif';
+  }
+  if (bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 &&
+      bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50) {
+    return 'image/webp';
+  }
+
+  // Default to video/mp4 for unknown types (existing behavior)
+  return 'video/mp4';
+}
+
+/**
+ * Get file extension from MIME type
+ */
+function getExtensionFromMimeType(contentType) {
+  const mimeToExt = {
+    'image/jpeg': '.jpg',
+    'image/jpg': '.jpg',
+    'image/png': '.png',
+    'image/gif': '.gif',
+    'image/webp': '.webp',
+    'image/avif': '.avif',
+    'image/svg+xml': '.svg',
+    'image/bmp': '.bmp',
+    'image/tiff': '.tiff'
+  };
+
+  return mimeToExt[contentType.toLowerCase()] || '.jpg';
+}
+
+/**
+ * Verify Blossom authentication (kind 24242 event)
+ */
+async function verifyBlossomAuth(req, deps) {
+  const authModule = await import('../auth/blossom.mjs');
+  return await authModule.verifyBlossomAuth(req, deps);
+}

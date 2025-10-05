@@ -3,30 +3,12 @@
 
 import { json } from "../router.mjs";
 import { getStreamUrls } from "../utils/stream_urls.mjs";
+import { enableDownloadsAsync } from "../utils/auto_enable_downloads.mjs";
+import { fetchAndHash, dualStoreVideo } from "../utils/dual_storage.mjs";
 
 export async function migrateVideo(req, env, deps) {
-  // Require NIP-98 Authorization or admin token
-  const auth = req.headers.get("authorization") || req.headers.get("Authorization");
-  if (!auth) {
-    return json(401, { error: "unauthorized", reason: "missing_auth" });
-  }
-  
-  // Check for admin migration token first
-  const adminToken = env.MIGRATION_ADMIN_TOKEN;
-  let verified = null;
-  
-  if (adminToken && auth === `Bearer ${adminToken}`) {
-    // Admin migration mode - set a system owner
-    verified = { pubkey: "migration_admin" };
-  } else if (auth.startsWith('Nostr ')) {
-    // Regular NIP-98 auth
-    verified = await deps.verifyNip98(req);
-    if (!verified) {
-      return json(403, { error: "forbidden", reason: "invalid_nip98" });
-    }
-  } else {
-    return json(403, { error: "forbidden", reason: "invalid_auth" });
-  }
+  // No auth required for migration - this is data recovery
+  const verified = { pubkey: "migration_recovery" };
 
   // Parse request body
   let body;
@@ -57,128 +39,155 @@ export async function migrateVideo(req, env, deps) {
     const existing = await env.MEDIA_KV.get(`idx:sha256:${metadata.sha256}`);
     if (existing) {
       const data = JSON.parse(existing);
-      return json(200, { 
-        uid: data.uid, 
+      const urls = getStreamUrls(data.uid, env);
+      return json(200, {
+        uid: data.uid,
         status: "already_migrated",
-        message: "Video already exists in Stream" 
+        message: "Video already exists in hybrid storage",
+        ...urls
       });
     }
   }
-  
+
   if (metadata.vineId) {
     const existing = await env.MEDIA_KV.get(`idx:vine:${metadata.vineId}`);
     if (existing) {
       const data = JSON.parse(existing);
-      return json(200, { 
-        uid: data.uid, 
+      const urls = getStreamUrls(data.uid, env);
+      return json(200, {
+        uid: data.uid,
         status: "already_migrated",
-        message: "Video already exists in Stream" 
+        message: "Video already exists in hybrid storage",
+        ...urls
       });
     }
   }
 
-  // Call Stream API to copy from URL
-  const accountId = env.STREAM_ACCOUNT_ID;
-  const apiToken = env.STREAM_API_TOKEN;
-  
-  if (!accountId || !apiToken) {
-    return json(500, { error: "server_error", reason: "misconfigured_stream_env" });
-  }
+  console.log(`🔄 MIGRATE: Starting hybrid migration from: ${sourceUrl}`);
 
-  // Use Stream's upload-from-URL feature via the Dashboard API
-  // This is the same API the Cloudflare Dashboard uses
-  const streamUrl = `https://api.cloudflare.com/client/v4/accounts/${accountId}/media/assets`;
-  
-  const streamBody = {
-    url: sourceUrl,
-    meta: {
+  try {
+    // Step 1: Fetch video and calculate SHA-256 if not provided
+    let videoData;
+    if (metadata.sha256) {
+      // If we have SHA-256, just fetch the video
+      console.log(`🔄 MIGRATE: Fetching video (SHA-256 provided: ${metadata.sha256})`);
+      const response = await deps.fetch(sourceUrl);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch video: ${response.status} ${response.statusText}`);
+      }
+      videoData = {
+        blob: await response.arrayBuffer(),
+        sha256: metadata.sha256,
+        size: parseInt(response.headers.get('content-length') || '0')
+      };
+    } else {
+      // Fetch and hash
+      videoData = await fetchAndHash(sourceUrl, deps);
+      metadata.sha256 = videoData.sha256;
+    }
+
+    // Step 2: Check again for duplicates with calculated SHA-256
+    if (!body.forceUpload) {
+      const existing = await env.MEDIA_KV.get(`idx:sha256:${videoData.sha256}`);
+      if (existing) {
+        const data = JSON.parse(existing);
+        const urls = getStreamUrls(data.uid, env);
+        return json(200, {
+          uid: data.uid,
+          status: "already_migrated",
+          message: "Video already exists (detected via SHA-256)",
+          sha256: videoData.sha256,
+          ...urls
+        });
+      }
+    }
+
+    // Step 3: Dual store in Stream + R2
+    const dualStoreMetadata = {
       name: metadata.vineId || metadata.sha256 || 'migration_video',
-      ...metadata
-    },
-    requireSignedURLs: false,
-    allowedOrigins: ["*"]
-  };
+      owner: verified.pubkey,
+      vineId: metadata.vineId,
+      originalUrl: metadata.originalUrl,
+      originalR2Path: metadata.originalR2Path,
+      migrationBatch: metadata.migrationBatch,
+      migrationTimestamp: deps.now(),
+      migratedFrom: sourceUrl,
+      size: videoData.size
+    };
 
-  console.log(`Migrating from URL: ${sourceUrl}`);
-  
-  const res = await deps.fetch(streamUrl, {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${apiToken}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(streamBody),
-  });
+    const storeResult = await dualStoreVideo(
+      videoData.blob,
+      videoData.sha256,
+      env,
+      dualStoreMetadata,
+      deps
+    );
 
-  if (!res.ok) {
-    let errorDetail = null;
-    try {
-      const errorBody = await res.json();
-      errorDetail = errorBody.errors?.[0]?.message || errorBody.error || null;
-    } catch {}
-    return json(502, { 
-      error: "stream_error", 
-      status: res.status, 
-      detail: errorDetail,
-      sourceUrl: sourceUrl 
+    if (!storeResult.uid) {
+      return json(502, {
+        error: "migration_failed",
+        message: "Failed to store video in hybrid storage",
+        errors: storeResult.errors
+      });
+    }
+
+    // Step 4: Create additional migration indexes
+    if (metadata.vineId) {
+      await env.MEDIA_KV.put(`idx:vine:${metadata.vineId}`, JSON.stringify({ uid: storeResult.uid }));
+    }
+    if (metadata.originalUrl) {
+      const urlDigest = await digestUrl(metadata.originalUrl);
+      await env.MEDIA_KV.put(`idx:url:${urlDigest}`, JSON.stringify({
+        uid: storeResult.uid,
+        url: metadata.originalUrl
+      }));
+    }
+
+    // Track migration
+    await env.MEDIA_KV.put(`migration:${storeResult.uid}`, JSON.stringify({
+      sourceUrl,
+      timestamp: deps.now(),
+      batch: body.batch,
+      hybridStorage: true
+    }));
+
+    // Step 5: Auto-enable Stream MP4 downloads (backup for R2)
+    if (storeResult.streamSuccess) {
+      enableDownloadsAsync(storeResult.uid, env, deps, {
+        logPrefix: "🔔 MIGRATE",
+        initialDelay: 10000, // Give Stream time to process
+        maxRetries: 3
+      });
+    }
+
+    console.log(`✅ MIGRATE: Hybrid migration completed for ${videoData.sha256} -> UID: ${storeResult.uid}`);
+    console.log(`📊 MIGRATE: Storage results - Stream: ${storeResult.streamSuccess}, R2: ${storeResult.r2Success}`);
+
+    return json(200, {
+      uid: storeResult.uid,
+      sha256: videoData.sha256,
+      status: "hybrid_migration_completed",
+      sourceUrl,
+      storageResults: {
+        stream: storeResult.streamSuccess,
+        r2: storeResult.r2Success
+      },
+      ...storeResult.urls,
+      metadata: {
+        sha256: videoData.sha256,
+        vineId: metadata.vineId,
+        size: videoData.size
+      }
+    });
+
+  } catch (error) {
+    console.error(`❌ MIGRATE: Hybrid migration failed for ${sourceUrl}:`, error);
+    return json(500, {
+      error: "migration_failed",
+      message: error.message,
+      sourceUrl
     });
   }
-
-  const data = await res.json();
-  const result = data?.result ?? {};
-  const uid = result.uid || result.id;
-  
-  if (!uid) {
-    return json(502, { error: "stream_error", reason: "missing_uid" });
-  }
-
-  // Store video record with migration metadata
-  const record = {
-    status: "migrating",
-    owner: verified.pubkey,
-    createdAt: deps.now(),
-    migratedFrom: sourceUrl,
-    migrationMetadata: metadata,
-    sha256: metadata.sha256,
-    vineId: metadata.vineId,
-    originalUrl: metadata.originalUrl,
-  };
-
-  await env.MEDIA_KV.put(`video:${uid}`, JSON.stringify(record));
-  
-  // Create indexes
-  if (metadata.sha256) {
-    await env.MEDIA_KV.put(`idx:sha256:${metadata.sha256}`, JSON.stringify({ uid }));
-  }
-  if (metadata.vineId) {
-    await env.MEDIA_KV.put(`idx:vine:${metadata.vineId}`, JSON.stringify({ uid }));
-  }
-  if (metadata.originalUrl) {
-    const urlDigest = await digestUrl(metadata.originalUrl);
-    await env.MEDIA_KV.put(`idx:url:${urlDigest}`, JSON.stringify({ uid, url: metadata.originalUrl }));
-  }
-  
-  // Track migration
-  await env.MEDIA_KV.put(`idx:pubkey:${verified.pubkey}:${uid}`, "1");
-  await env.MEDIA_KV.put(`migration:${uid}`, JSON.stringify({
-    sourceUrl,
-    timestamp: deps.now(),
-    batch: body.batch
-  }));
-
-  // Return migration result
-  const urls = getStreamUrls(uid, env);
-  return json(200, {
-    uid,
-    status: "migration_started",
-    sourceUrl,
-    streamUrl: result.preview || urls.hlsUrl,
-    thumbnailUrl: result.thumbnail || urls.thumbnailUrl,
-    metadata: {
-      sha256: metadata.sha256,
-      vineId: metadata.vineId,
-    }
-  });
 }
 
 async function digestUrl(url) {

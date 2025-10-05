@@ -2,6 +2,8 @@
 // ABOUTME: Fetches videos from cdn.openvine.co and uploads them to Stream with NIP-98 auth
 
 import { getStreamUrls } from '../utils/stream_urls.mjs';
+import { enableDownloadsAsync } from '../utils/auto_enable_downloads.mjs';
+import { fetchAndHash, dualStoreVideo } from '../utils/dual_storage.mjs';
 
 // Helper function to fetch from OpenVine API with NIP-98 auth
 async function fetchFromOpenVine(url, nip98AuthHeader) {
@@ -64,135 +66,144 @@ export async function handleOpenVineMigration(request, env) {
       });
     }
 
-    console.log(`Starting migration from OpenVine: ${videoUrl}`);
+    console.log(`🌿 OPENVINE: Starting hybrid migration from: ${videoUrl}`);
 
-    // Use Stream's copy from URL feature directly (more reliable than upload)
-    // Step 1: Copy video to Stream
-    const copyResponse = await fetch(
-      `https://api.cloudflare.com/client/v4/accounts/${env.STREAM_ACCOUNT_ID}/stream/copy`,
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${env.STREAM_API_TOKEN}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          url: videoUrl,
-          meta: {
-            name: vineId || videoId,
-            source: 'openvine_migration',
-            originalUrl: videoUrl,
-            videoId: videoId
-          },
-          downloadable: true  // Enable MP4 downloads
-        })
+    try {
+      // Step 1: Check if already migrated
+      const existingByVineId = vineId ? await env.MEDIA_KV.get(`idx:vine:${vineId}`) : null;
+      if (existingByVineId) {
+        const data = JSON.parse(existingByVineId);
+        const urls = getStreamUrls(data.uid, env);
+        return new Response(JSON.stringify({
+          status: 'already_migrated',
+          uid: data.uid,
+          videoId: videoId,
+          vineId: vineId,
+          message: 'OpenVine video already migrated to hybrid storage',
+          ...urls
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        });
       }
-    );
 
-    if (!copyResponse.ok) {
-      const errorText = await copyResponse.text();
-      console.error('Stream copy API error:', errorText);
-      return new Response(JSON.stringify({ 
-        error: 'Failed to copy video to Stream',
-        details: errorText
-      }), { 
+      // Step 2: Fetch video and calculate SHA-256
+      const videoData = await fetchAndHash(videoUrl, { fetch });
+
+      // Check for existing video by SHA-256
+      const existingBySHA = await env.MEDIA_KV.get(`idx:sha256:${videoData.sha256}`);
+      if (existingBySHA) {
+        const data = JSON.parse(existingBySHA);
+
+        // Update vineId mapping if needed
+        if (vineId) {
+          await env.MEDIA_KV.put(`idx:vine:${vineId}`, JSON.stringify({ uid: data.uid }));
+        }
+
+        const urls = getStreamUrls(data.uid, env);
+        return new Response(JSON.stringify({
+          status: 'already_migrated',
+          uid: data.uid,
+          sha256: videoData.sha256,
+          videoId: videoId,
+          vineId: vineId,
+          message: 'OpenVine video already exists (detected via SHA-256)',
+          ...urls
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      // Step 3: Dual store in Stream + R2
+      const dualStoreMetadata = {
+        name: vineId || videoId || `openvine-${videoData.sha256.substring(0, 8)}`,
+        owner: 'openvine_migration',
+        vineId: vineId || videoId,
+        videoId: videoId,
+        source: 'openvine_migration',
+        originalUrl: videoUrl,
+        migratedFrom: videoUrl,
+        size: videoData.size
+      };
+
+      const deps = { fetch, now: () => Date.now() };
+      const storeResult = await dualStoreVideo(
+        videoData.blob,
+        videoData.sha256,
+        env,
+        dualStoreMetadata,
+        deps
+      );
+
+      if (!storeResult.uid) {
+        return new Response(JSON.stringify({
+          error: 'Failed to store OpenVine video in hybrid storage',
+          errors: storeResult.errors,
+          videoUrl: videoUrl
+        }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      // Step 4: Create OpenVine-specific indexes
+      if (vineId) {
+        await env.MEDIA_KV.put(`idx:vine:${vineId}`, JSON.stringify({ uid: storeResult.uid }));
+      }
+
+      // Store migration-specific record
+      await env.MEDIA_KV.put(`migration:openvine:${storeResult.uid}`, JSON.stringify({
+        videoId: videoId,
+        vineId: vineId || videoId,
+        sourceUrl: videoUrl,
+        sha256: videoData.sha256,
+        timestamp: new Date().toISOString(),
+        hybridStorage: true,
+        lookupKey: true
+      }));
+
+      // Step 5: Auto-enable Stream MP4 downloads (backup for R2)
+      if (storeResult.streamSuccess) {
+        enableDownloadsAsync(storeResult.uid, env, deps, {
+          logPrefix: "🌿 OPENVINE",
+          initialDelay: 15000,  // OpenVine needs longer processing time
+          maxRetries: 5         // More retries for complex migrations
+        });
+      }
+
+      console.log(`✅ OPENVINE: Hybrid migration completed for ${videoData.sha256} -> UID: ${storeResult.uid}`);
+      console.log(`📊 OPENVINE: Storage results - Stream: ${storeResult.streamSuccess}, R2: ${storeResult.r2Success}`);
+
+      return new Response(JSON.stringify({
+        status: 'hybrid_migration_completed',
+        uid: storeResult.uid,
+        sha256: videoData.sha256,
+        videoId: videoId,
+        vineId: vineId,
+        sourceUrl: videoUrl,
+        storageResults: {
+          stream: storeResult.streamSuccess,
+          r2: storeResult.r2Success
+        },
+        ...storeResult.urls,
+        message: 'Successfully migrated from OpenVine to hybrid storage'
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+
+    } catch (error) {
+      console.error('🌿 OPENVINE: Hybrid migration error:', error);
+      return new Response(JSON.stringify({
+        error: 'OpenVine migration failed',
+        message: error.message,
+        videoUrl: videoUrl
+      }), {
         status: 500,
         headers: { 'Content-Type': 'application/json' }
       });
     }
-
-    // Get the UID from the copy response
-    const copyData = await copyResponse.json();
-    const uid = copyData.result.uid;
-    
-    console.log(`Video copied to Stream: ${uid}`);
-    
-    // Step 2: Enable downloads for the video via separate API call
-    // Wait for Stream to fully process the video before enabling downloads
-    // Testing shows Stream needs 10-15 seconds after copy API returns
-    console.log(`Waiting 15 seconds for Stream to fully process video ${uid} before enabling downloads...`);
-    await new Promise(resolve => setTimeout(resolve, 15000));
-    
-    let downloadStatus = 'not_attempted';
-    try {
-      const accountId = env.CLOUDFLARE_ACCOUNT_ID || env.STREAM_ACCOUNT_ID;
-      const apiToken = env.CLOUDFLARE_API_TOKEN || env.STREAM_API_TOKEN;
-      
-      console.log(`Attempting to enable downloads for ${uid} with account ${accountId}`);
-      if (!apiToken) {
-        console.error('ERROR: No API token available for enabling downloads');
-        downloadStatus = 'no_token';
-        throw new Error('Missing API token');
-      }
-      
-      const enableDownloadResponse = await fetch(
-        `https://api.cloudflare.com/client/v4/accounts/${accountId}/stream/${uid}/downloads`,
-            {
-              method: 'POST',
-              headers: {
-                'Authorization': `Bearer ${apiToken}`,
-                'Content-Type': 'application/json'
-              }
-            }
-          );
-          
-      if (enableDownloadResponse.ok) {
-        const downloadData = await enableDownloadResponse.json();
-        downloadStatus = downloadData.result?.default?.status || 'enabled';
-        console.log(`SUCCESS: Downloads enabled for ${uid}, status: ${downloadStatus}`);
-      } else {
-        const errorText = await enableDownloadResponse.text();
-        downloadStatus = 'failed';
-        console.error(`FAILED to enable downloads for ${uid}: ${enableDownloadResponse.status} - ${errorText}`);
-      }
-    } catch (error) {
-      console.error(`ERROR enabling downloads for ${uid}:`, error.message);
-      downloadStatus = 'error';
-    }
-    
-    console.log(`Download enable status for ${uid}: ${downloadStatus}`);
-    
-    // Step 3: Store migration record
-    const record = {
-      status: 'migrated',
-      owner: 'openvine_migration',
-      migratedFrom: videoUrl,
-      videoId: videoId,
-      vineId: vineId || videoId,
-      uid: uid,
-      timestamp: new Date().toISOString()
-    };
-
-    // Store in KV using correct namespace and key patterns
-    if (env.MEDIA_KV) {
-      // Store main video record
-      await env.MEDIA_KV.put(`video:${uid}`, JSON.stringify(record));
-      
-      // Store index for vineId lookup
-      await env.MEDIA_KV.put(`idx:vine:${vineId || videoId}`, JSON.stringify({ uid }));
-      
-      // Store migration-specific record
-      await env.MEDIA_KV.put(`migration:openvine:${uid}`, JSON.stringify({
-        ...record,
-        lookupKey: true
-      }));
-    }
-
-    // Get URLs
-    const urls = getStreamUrls(uid, env);
-
-    return new Response(JSON.stringify({
-      status: 'migrated',
-      uid: uid,
-      videoId: videoId,
-      sourceUrl: videoUrl,
-      ...urls,
-      downloadStatus: downloadStatus,
-      message: 'Successfully migrated from OpenVine'
-    }), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' }
-    });
 
   } catch (error) {
     console.error('OpenVine migration error:', error);
