@@ -242,9 +242,9 @@ var cdn_proxy_worker_default = {
       const blossomMatch = path.match(/^\/([a-f0-9]{64})(\.[\w]+)?$/);
       if (blossomMatch) {
         const sha256 = blossomMatch[1];
-        const extension2 = blossomMatch[2] || "";
-        console.log(`\u{1F504} HYBRID CDN: Blossom request for ${sha256}${extension2}`);
-        return await serveFromR2(sha256, env, url, request, extension2);
+        const extension = blossomMatch[2] || "";
+        console.log(`\u{1F504} HYBRID CDN: Blossom request for ${sha256}${extension}`);
+        return await serveFromR2(sha256, env, url, request);
       }
       const uidMatch = path.match(/^\/([a-f0-9]{32})(\.mp4)?$/);
       if (uidMatch) {
@@ -356,7 +356,7 @@ function processQueue() {
   }
 }
 __name(processQueue, "processQueue");
-async function serveFromR2(sha256, env, url, request, extension2 = "") {
+async function serveFromR2(sha256, env, url, request) {
   const cacheKey = `r2:${sha256}:${url.pathname}`;
   const startTime = Date.now();
   try {
@@ -496,7 +496,7 @@ async function actuallyFetchFromR2(sha256, env, url, request, startTime) {
       return imageResult;
     }
     let r2Key = `${sha256}.mp4`;
-    console.log(`\u{1F504} HYBRID CDN: Checking R2 for video ${r2Key} (requested extension: "${extension}"`);
+    console.log(`\u{1F504} HYBRID CDN: Checking R2 for video ${r2Key}`);
     const range = request.headers.get("range");
     let r2Object = await env.R2_VIDEOS.get(r2Key);
     if (!r2Object) {
@@ -691,11 +691,11 @@ async function checkAndServeImage(sha256, env, url, request, startTime = Date.no
         "X-CDN-Processing-Time": (Date.now() - startTime).toString(),
         "X-CDN-Cache-Status": "r2-image-hit"
       });
-      const extension2 = getExtensionFromMimeType(image.contentType);
+      const extension = getExtensionFromMimeType(image.contentType);
       if (url.searchParams.get("download") === "true") {
-        headers.set("Content-Disposition", `attachment; filename="${sha256}${extension2}"`);
+        headers.set("Content-Disposition", `attachment; filename="${sha256}${extension}"`);
       } else {
-        headers.set("Content-Disposition", `inline; filename="${sha256}${extension2}"`);
+        headers.set("Content-Disposition", `inline; filename="${sha256}${extension}"`);
       }
       const response = new Response(r2Object.body, { headers });
       addMonitoringHeaders(response);

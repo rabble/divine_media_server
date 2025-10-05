@@ -71,8 +71,7 @@ export default {
         console.log(`🔄 HYBRID CDN: Blossom request for ${sha256}${extension}`);
 
         // Serve from R2 (handles both videos and images)
-        // Pass the extension to know if we should look for the file with extension
-        return await serveFromR2(sha256, env, url, request, extension);
+        return await serveFromR2(sha256, env, url, request);
       }
 
       // Handle direct UID requests: /<uid> or /<uid>.mp4 (32-character hex)
@@ -208,7 +207,7 @@ function processQueue() {
 }
 
 // Serve file directly from R2 using SHA-256 hash (videos and images)
-async function serveFromR2(sha256, env, url, request, extension = '') {
+async function serveFromR2(sha256, env, url, request) {
   const cacheKey = `r2:${sha256}:${url.pathname}`;
   const startTime = Date.now();
 
@@ -385,7 +384,7 @@ async function actuallyFetchFromR2(sha256, env, url, request, startTime) {
     // Fall back to video serving
     // Try both paths: new format (sha256.mp4) and old format (videos/sha256.mp4)
     let r2Key = `${sha256}.mp4`;
-    console.log(`🔄 HYBRID CDN: Checking R2 for video ${r2Key} (requested extension: "${extension}"`);
+    console.log(`🔄 HYBRID CDN: Checking R2 for video ${r2Key}`);
 
     // Check if Range header is present
     const range = request.headers.get('range');
