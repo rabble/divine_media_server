@@ -71,7 +71,8 @@ export default {
         console.log(`🔄 HYBRID CDN: Blossom request for ${sha256}${extension}`);
 
         // Serve from R2 (handles both videos and images)
-        return await serveFromR2(sha256, env, url, request);
+        // Pass the extension to know if we should look for the file with extension
+        return await serveFromR2(sha256, env, url, request, extension);
       }
 
       // Handle direct UID requests: /<uid> or /<uid>.mp4 (32-character hex)
@@ -207,7 +208,7 @@ function processQueue() {
 }
 
 // Serve file directly from R2 using SHA-256 hash (videos and images)
-async function serveFromR2(sha256, env, url, request) {
+async function serveFromR2(sha256, env, url, request, extension = '') {
   const cacheKey = `r2:${sha256}:${url.pathname}`;
   const startTime = Date.now();
 
@@ -384,7 +385,7 @@ async function actuallyFetchFromR2(sha256, env, url, request, startTime) {
     // Fall back to video serving
     // Try both paths: new format (sha256.mp4) and old format (videos/sha256.mp4)
     let r2Key = `${sha256}.mp4`;
-    console.log(`🔄 HYBRID CDN: Checking R2 for video ${r2Key}`);
+    console.log(`🔄 HYBRID CDN: Checking R2 for video ${r2Key} (requested extension: "${extension}"`);
 
     // Check if Range header is present
     const range = request.headers.get('range');
@@ -449,13 +450,27 @@ async function actuallyFetchFromR2(sha256, env, url, request, startTime) {
       }
     }
 
-    console.log(`❌ HYBRID CDN: ${sha256}.mp4 not found in R2, falling back to Stream`);
-    return await fallbackToStream(sha256, env, request);
+    console.log(`❌ HYBRID CDN: ${sha256}.mp4 not found in R2`);
+    // Stream removed - no fallback available
+    return new Response('Video not found', {
+      status: 404,
+      headers: {
+        'Content-Type': 'text/plain',
+        'Access-Control-Allow-Origin': '*'
+      }
+    });
 
   } catch (error) {
     errors++;
     console.error(`❌ HYBRID CDN: R2 error for ${sha256}:`, error);
-    return await fallbackToStream(sha256, env, request);
+    // Stream removed - no fallback available
+    return new Response('Server error', {
+      status: 500,
+      headers: {
+        'Content-Type': 'text/plain',
+        'Access-Control-Allow-Origin': '*'
+      }
+    });
   }
 }
 

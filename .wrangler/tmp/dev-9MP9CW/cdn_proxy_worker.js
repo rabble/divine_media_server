@@ -242,9 +242,9 @@ var cdn_proxy_worker_default = {
       const blossomMatch = path.match(/^\/([a-f0-9]{64})(\.[\w]+)?$/);
       if (blossomMatch) {
         const sha256 = blossomMatch[1];
-        const extension = blossomMatch[2] || "";
-        console.log(`\u{1F504} HYBRID CDN: Blossom request for ${sha256}${extension}`);
-        return await serveFromR2(sha256, env, url, request);
+        const extension2 = blossomMatch[2] || "";
+        console.log(`\u{1F504} HYBRID CDN: Blossom request for ${sha256}${extension2}`);
+        return await serveFromR2(sha256, env, url, request, extension2);
       }
       const uidMatch = path.match(/^\/([a-f0-9]{32})(\.mp4)?$/);
       if (uidMatch) {
@@ -356,7 +356,7 @@ function processQueue() {
   }
 }
 __name(processQueue, "processQueue");
-async function serveFromR2(sha256, env, url, request) {
+async function serveFromR2(sha256, env, url, request, extension2 = "") {
   const cacheKey = `r2:${sha256}:${url.pathname}`;
   const startTime = Date.now();
   try {
@@ -496,7 +496,7 @@ async function actuallyFetchFromR2(sha256, env, url, request, startTime) {
       return imageResult;
     }
     let r2Key = `${sha256}.mp4`;
-    console.log(`\u{1F504} HYBRID CDN: Checking R2 for video ${r2Key}`);
+    console.log(`\u{1F504} HYBRID CDN: Checking R2 for video ${r2Key} (requested extension: "${extension}"`);
     const range = request.headers.get("range");
     let r2Object = await env.R2_VIDEOS.get(r2Key);
     if (!r2Object) {
@@ -549,12 +549,24 @@ async function actuallyFetchFromR2(sha256, env, url, request, startTime) {
         return response;
       }
     }
-    console.log(`\u274C HYBRID CDN: ${sha256}.mp4 not found in R2, falling back to Stream`);
-    return await fallbackToStream(sha256, env, request);
+    console.log(`\u274C HYBRID CDN: ${sha256}.mp4 not found in R2`);
+    return new Response("Video not found", {
+      status: 404,
+      headers: {
+        "Content-Type": "text/plain",
+        "Access-Control-Allow-Origin": "*"
+      }
+    });
   } catch (error) {
     errors++;
     console.error(`\u274C HYBRID CDN: R2 error for ${sha256}:`, error);
-    return await fallbackToStream(sha256, env, request);
+    return new Response("Server error", {
+      status: 500,
+      headers: {
+        "Content-Type": "text/plain",
+        "Access-Control-Allow-Origin": "*"
+      }
+    });
   }
 }
 __name(actuallyFetchFromR2, "actuallyFetchFromR2");
@@ -679,11 +691,11 @@ async function checkAndServeImage(sha256, env, url, request, startTime = Date.no
         "X-CDN-Processing-Time": (Date.now() - startTime).toString(),
         "X-CDN-Cache-Status": "r2-image-hit"
       });
-      const extension = getExtensionFromMimeType(image.contentType);
+      const extension2 = getExtensionFromMimeType(image.contentType);
       if (url.searchParams.get("download") === "true") {
-        headers.set("Content-Disposition", `attachment; filename="${sha256}${extension}"`);
+        headers.set("Content-Disposition", `attachment; filename="${sha256}${extension2}"`);
       } else {
-        headers.set("Content-Disposition", `inline; filename="${sha256}${extension}"`);
+        headers.set("Content-Disposition", `inline; filename="${sha256}${extension2}"`);
       }
       const response = new Response(r2Object.body, { headers });
       addMonitoringHeaders(response);
