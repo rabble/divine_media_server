@@ -239,9 +239,17 @@ async function serveFromR2(sha256, env, url, request) {
       // Store in memory cache for next time
       await storeInMemoryCache(cacheKey, cachedResponse);
 
-      const response = cachedResponse.clone();
-      response.headers.set('X-CDN-Cache-Status', 'edge-hit');
-      response.headers.set('X-CDN-Processing-Time', (Date.now() - startTime).toString());
+      // Create new response with modified headers (can't modify cached response headers)
+      const newHeaders = new Headers(cachedResponse.headers);
+      newHeaders.set('X-CDN-Cache-Status', 'edge-hit');
+      newHeaders.set('X-CDN-Processing-Time', (Date.now() - startTime).toString());
+
+      const response = new Response(cachedResponse.body, {
+        status: cachedResponse.status,
+        statusText: cachedResponse.statusText,
+        headers: newHeaders
+      });
+
       addMonitoringHeaders(response);
       return response;
     }
@@ -253,9 +261,18 @@ async function serveFromR2(sha256, env, url, request) {
       console.log(`🔗 HYBRID CDN: Coalescing request for ${sha256}`);
       try {
         const pendingResponse = await pendingRequests.get(cacheKey);
-        const response = pendingResponse.clone();
-        response.headers.set('X-CDN-Cache-Status', 'coalesced');
-        response.headers.set('X-CDN-Processing-Time', (Date.now() - startTime).toString());
+
+        // Create new response with modified headers
+        const newHeaders = new Headers(pendingResponse.headers);
+        newHeaders.set('X-CDN-Cache-Status', 'coalesced');
+        newHeaders.set('X-CDN-Processing-Time', (Date.now() - startTime).toString());
+
+        const response = new Response(pendingResponse.body, {
+          status: pendingResponse.status,
+          statusText: pendingResponse.statusText,
+          headers: newHeaders
+        });
+
         addMonitoringHeaders(response);
         return response;
       } catch (error) {
@@ -610,14 +627,16 @@ async function proxyToStreamUID(uid, env, request) {
     responseHeaders.set('Accept-Ranges', 'bytes');
   }
 
+  // Add CDN headers before creating the response
+  responseHeaders.set('X-CDN-Processing-Time', (Date.now() - startTime).toString());
+  responseHeaders.set('X-CDN-Cache-Status', 'stream-proxy');
+
   const finalResponse = new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
     headers: responseHeaders
   });
 
-  finalResponse.headers.set('X-CDN-Processing-Time', (Date.now() - startTime).toString());
-  finalResponse.headers.set('X-CDN-Cache-Status', 'stream-proxy');
   addMonitoringHeaders(finalResponse);
 
   return finalResponse;
@@ -930,6 +949,7 @@ async function proxyToStream(request, env, path) {
   newHeaders.set('Access-Control-Allow-Origin', '*');
   newHeaders.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   newHeaders.set('Access-Control-Allow-Headers', 'Content-Type');
+  newHeaders.set('X-CDN-Cache-Status', 'stream-default-proxy');
 
   const finalResponse = new Response(response.body, {
     status: response.status,
@@ -937,7 +957,6 @@ async function proxyToStream(request, env, path) {
     headers: newHeaders
   });
 
-  finalResponse.headers.set('X-CDN-Cache-Status', 'stream-default-proxy');
   addMonitoringHeaders(finalResponse);
 
   return finalResponse;
