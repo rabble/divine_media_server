@@ -1,0 +1,18 @@
+{
+  "name": "blossom-sdk-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "deploy:staging": "wrangler deploy --env staging",
+    "deploy:prod": "wrangler deploy --env production"
+  },
+  "dependencies": {
+    "blossom-server-sdk": "^0.8.0"
+  },
+  "devDependencies": {
+    "wrangler": "^3.0.0"
+  }
+}
