@@ -52,6 +52,25 @@ npm run deploy:staging
 npm run deploy:prod
 ```
 
+### Live Deployments
+
+**Staging:** https://blossom-sdk-worker-staging.protestnet.workers.dev
+
+Test it:
+```bash
+# List blobs
+curl https://blossom-sdk-worker-staging.protestnet.workers.dev/list/0000000000000000000000000000000000000000000000000000000000000000
+
+# Upload (requires auth)
+echo "test" | curl -X PUT https://blossom-sdk-worker-staging.protestnet.workers.dev/upload \
+  -H "Authorization: Nostr pubkey=YOUR_PUBKEY_HEX" \
+  -H "Content-Type: text/plain" \
+  --data-binary @-
+
+# Run audit
+npx blossom-audit audit https://blossom-sdk-worker-staging.protestnet.workers.dev bitcoin
+```
+
 ## Endpoints
 
 Same as main worker:
