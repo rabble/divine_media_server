@@ -36,6 +36,22 @@ cd blossom-sdk-worker
 npm install
 ```
 
+## Testing
+
+### Unit Tests
+```bash
+npm test
+```
+17 tests covering all endpoints with 100% pass rate.
+
+### Live Testing
+```bash
+./test-live.sh
+```
+Automated test script that validates all endpoints against staging.
+
+See `TESTING.md` for comprehensive testing guide.
+
 ## Development
 
 ```bash
