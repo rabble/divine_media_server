@@ -24,18 +24,31 @@ export class R2BlobStorage {
     }
   }
 
-  async writeBlob(sha256, stream, mimeType) {
+  async writeBlob(sha256, stream, mimeType, owner = '', uid = '', proofModeVerified = null) {
     const key = `blobs/${sha256}`;
+
+    const customMetadata = {
+      sha256: sha256,
+      uploadedAt: new Date().toISOString(),
+      owner: owner,
+      uid: uid
+    };
+
+    // Add ProofMode verification metadata if available
+    if (proofModeVerified) {
+      customMetadata.proofmode_verified = proofModeVerified.verified ? 'true' : 'false';
+      customMetadata.proofmode_level = proofModeVerified.level || 'unverified';
+      if (proofModeVerified.deviceFingerprint) {
+        customMetadata.proofmode_fingerprint = proofModeVerified.deviceFingerprint;
+      }
+    }
 
     await this.r2.put(key, stream, {
       httpMetadata: {
         contentType: mimeType || 'application/octet-stream',
         cacheControl: 'public, max-age=31536000, immutable'
       },
-      customMetadata: {
-        sha256: sha256,
-        uploadedAt: new Date().toISOString()
-      }
+      customMetadata
     });
 
     return true;
@@ -52,7 +65,8 @@ export class R2BlobStorage {
     return {
       body: obj.body,
       size: obj.size,
-      type: obj.httpMetadata?.contentType || 'application/octet-stream'
+      type: obj.httpMetadata?.contentType || 'application/octet-stream',
+      etag: obj.etag
     };
   }
 

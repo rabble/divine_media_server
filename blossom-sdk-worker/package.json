@@ -11,7 +11,8 @@
     "deploy:prod": "wrangler deploy --env production"
   },
   "dependencies": {
-    "blossom-server-sdk": "^0.8.0"
+    "blossom-server-sdk": "^0.8.0",
+    "openpgp": "^6.2.2"
   },
   "devDependencies": {
     "wrangler": "^3.0.0"

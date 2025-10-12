@@ -1,0 +1,77 @@
+name = "video-moderation-worker"
+main = "./moderation_queue.mjs"
+compatibility_date = "2024-08-01"
+account_id = "c84e7a9bf7ed99cb41b8e73566568c75"
+
+# Default (dev) environment
+[vars]
+MODERATION_ENABLED = "true"
+CDN_DOMAIN = "cdn.divine.video"
+STREAM_DOMAIN = "cdn.divine.video"
+
+[[kv_namespaces]]
+binding = "MEDIA_KV"
+id = "fc3fb1f988894752ae62462d5d0d2222"
+
+[[kv_namespaces]]
+binding = "MODERATION_KV"
+id = "eee0689974834390acd39d543002cac3"
+
+# Queue consumer binding
+[[queues.consumers]]
+queue = "video-moderation-queue"
+max_batch_size = 10
+max_batch_timeout = 30
+max_retries = 3
+
+# Staging environment
+[env.staging]
+name = "video-moderation-worker-staging"
+account_id = "c84e7a9bf7ed99cb41b8e73566568c75"
+
+[env.staging.vars]
+MODERATION_ENABLED = "true"
+CDN_DOMAIN = "cdn.divine.video"
+STREAM_DOMAIN = "cdn.divine.video"
+
+[[env.staging.kv_namespaces]]
+binding = "MEDIA_KV"
+id = "eca883e0a5374b32ab92b3747235a1e3"
+
+[[env.staging.kv_namespaces]]
+binding = "MODERATION_KV"
+id = "eee0689974834390acd39d543002cac3"
+
+[[env.staging.queues.consumers]]
+queue = "video-moderation-queue-staging"
+max_batch_size = 10
+max_batch_timeout = 30
+max_retries = 3
+
+# Production environment
+[env.production]
+name = "video-moderation-worker-prod"
+account_id = "c84e7a9bf7ed99cb41b8e73566568c75"
+
+[env.production.vars]
+MODERATION_ENABLED = "true"
+CDN_DOMAIN = "cdn.divine.video"
+STREAM_DOMAIN = "cdn.divine.video"
+
+[[env.production.kv_namespaces]]
+binding = "MEDIA_KV"
+id = "effcf271031647f0947983f5f4211aa2"
+
+[[env.production.kv_namespaces]]
+binding = "MODERATION_KV"
+id = "eee0689974834390acd39d543002cac3"
+
+[[env.production.queues.consumers]]
+queue = "video-moderation-queue"
+max_batch_size = 10
+max_batch_timeout = 30
+max_retries = 3
+
+# Secrets expected (set per environment with `wrangler secret put ... --env <name>`):
+# - SIGHTENGINE_USER (for content moderation API)
+# - SIGHTENGINE_SECRET (for content moderation API)

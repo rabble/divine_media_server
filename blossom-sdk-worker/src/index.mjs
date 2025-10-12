@@ -3,6 +3,7 @@
 
 import { R2BlobStorage } from './storage/r2-blob-storage.mjs';
 import { KVMetadataStore } from './storage/kv-metadata-store.mjs';
+import { validateProofMode, storeVerificationResult } from './proofmode-validator.mjs';
 
 /**
  * Cloudflare Worker entry point
@@ -25,7 +26,7 @@ export default {
           headers: {
             'Access-Control-Allow-Origin': '*',
             'Access-Control-Allow-Methods': 'GET, HEAD, PUT, DELETE',
-            'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+            'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-ProofMode-Manifest, X-ProofMode-Signature, X-ProofMode-Attestation',
             'Access-Control-Max-Age': '86400'
           }
         });
@@ -36,7 +37,7 @@ export default {
       if (method === 'GET' || method === 'HEAD') {
         const match = url.pathname.match(/^\/([a-f0-9]{64})(\.[a-z0-9]+)?$/);
         if (match) {
-          return await handleGetBlob(match[1], method === 'HEAD', blobStorage, metadataStore);
+          return await handleGetBlob(match[1], method === 'HEAD', blobStorage, metadataStore, request);
         }
       }
 
@@ -73,7 +74,7 @@ export default {
 /**
  * Handle GET/HEAD blob request
  */
-async function handleGetBlob(sha256, isHead, blobStorage, metadataStore) {
+async function handleGetBlob(sha256, isHead, blobStorage, metadataStore, req) {
   // Check if blob exists in metadata
   const metadata = await metadataStore.getBlob(sha256);
   if (!metadata) {
@@ -87,6 +88,7 @@ async function handleGetBlob(sha256, isHead, blobStorage, metadataStore) {
       headers: {
         'Content-Type': metadata.type || 'application/octet-stream',
         'Content-Length': metadata.size?.toString() || '0',
+        'Accept-Ranges': 'bytes',
         'Access-Control-Allow-Origin': '*',
         'Cache-Control': 'public, max-age=31536000, immutable'
       }
@@ -99,14 +101,46 @@ async function handleGetBlob(sha256, isHead, blobStorage, metadataStore) {
     return new Response('Not Found', { status: 404 });
   }
 
+  // Support HTTP range requests for video streaming
+  const range = req.headers.get('range');
+  if (range) {
+    const parts = range.replace(/bytes=/, '').split('-');
+    const start = parseInt(parts[0], 10);
+    const end = parts[1] ? parseInt(parts[1], 10) : blob.size - 1;
+    const chunksize = (end - start) + 1;
+
+    const headers = new Headers();
+    headers.set('Content-Type', blob.type || 'application/octet-stream');
+    headers.set('Content-Range', `bytes ${start}-${end}/${blob.size}`);
+    headers.set('Accept-Ranges', 'bytes');
+    headers.set('Content-Length', chunksize.toString());
+    headers.set('Access-Control-Allow-Origin', '*');
+    headers.set('Cache-Control', 'public, max-age=31536000, immutable');
+
+    if (blob.etag) {
+      headers.set('ETag', blob.etag);
+    }
+
+    return new Response(blob.body, {
+      status: 206,
+      headers
+    });
+  }
+
+  // Regular GET request
+  const headers = new Headers();
+  headers.set('Content-Type', blob.type || 'application/octet-stream');
+  headers.set('Content-Length', blob.size.toString());
+  headers.set('Access-Control-Allow-Origin', '*');
+  headers.set('Cache-Control', 'public, max-age=31536000, immutable');
+
+  if (blob.etag) {
+    headers.set('ETag', blob.etag);
+  }
+
   return new Response(blob.body, {
     status: 200,
-    headers: {
-      'Content-Type': blob.type || 'application/octet-stream',
-      'Content-Length': blob.size.toString(),
-      'Access-Control-Allow-Origin': '*',
-      'Cache-Control': 'public, max-age=31536000, immutable'
-    }
+    headers
   });
 }
 
@@ -145,9 +179,10 @@ async function handleUploadBlob(request, blobStorage, metadataStore, env) {
   if (await metadataStore.hasBlob(sha256)) {
     const existing = await metadataStore.getBlob(sha256);
     const domain = env.STREAM_DOMAIN || 'cdn.divine.video';
+    const fileExt = getFileExtension(existing.type || contentType);
 
     return jsonResponse(200, {
-      url: `https://${domain}/${sha256}`,
+      url: `https://${domain}/${sha256}${fileExt}`,
       sha256,
       size: existing.size || size,
       type: existing.type || contentType,
@@ -155,8 +190,34 @@ async function handleUploadBlob(request, blobStorage, metadataStore, env) {
     });
   }
 
-  // Store blob
-  await blobStorage.writeBlob(sha256, blob, contentType);
+  // Validate ProofMode (doesn't block upload)
+  let proofModeResult;
+  try {
+    proofModeResult = await validateProofMode(request, sha256, blob);
+    console.log(`ProofMode validation result: ${JSON.stringify(proofModeResult)}`);
+  } catch (error) {
+    console.error('ProofMode validation error:', error);
+    proofModeResult = {
+      verified: false,
+      level: 'unverified',
+      message: 'ProofMode validation error'
+    };
+  }
+
+  // Generate UID for this blob
+  const uid = crypto.randomUUID().replace(/-/g, '');
+
+  // Store blob with metadata (including ProofMode verification)
+  await blobStorage.writeBlob(sha256, blob, contentType, auth.pubkey, uid, proofModeResult);
+
+  // Store ProofMode verification result in KV
+  if (env.MEDIA_KV) {
+    try {
+      await storeVerificationResult(sha256, proofModeResult, env.MEDIA_KV);
+    } catch (error) {
+      console.error('Failed to store ProofMode verification result:', error);
+    }
+  }
 
   // Store metadata
   const now = Math.floor(Date.now() / 1000);
@@ -171,13 +232,20 @@ async function handleUploadBlob(request, blobStorage, metadataStore, env) {
   await metadataStore.addBlobOwner(sha256, auth.pubkey);
 
   const domain = env.STREAM_DOMAIN || 'cdn.divine.video';
+  const fileExt = getFileExtension(contentType);
 
   return jsonResponse(200, {
-    url: `https://${domain}/${sha256}`,
+    url: `https://${domain}/${sha256}${fileExt}`,
     sha256,
     size,
     type: contentType,
-    uploaded: now
+    uploaded: now,
+    proofmode: {
+      verified: proofModeResult.verified,
+      level: proofModeResult.level,
+      deviceFingerprint: proofModeResult.deviceFingerprint,
+      timestamp: proofModeResult.timestamp
+    }
   });
 }
 
@@ -277,6 +345,24 @@ function base64ToString(b64) {
     bytes[i] = bin.charCodeAt(i);
   }
   return new TextDecoder().decode(bytes);
+}
+
+/**
+ * Get file extension from MIME type
+ */
+function getFileExtension(mimeType) {
+  const typeMap = {
+    'video/mp4': '.mp4',
+    'video/webm': '.webm',
+    'video/quicktime': '.mov',
+    'image/jpeg': '.jpg',
+    'image/png': '.png',
+    'image/gif': '.gif',
+    'image/webp': '.webp',
+    'application/pdf': '.pdf',
+    'application/octet-stream': '.bin'
+  };
+  return typeMap[mimeType] || '.bin';
 }
 
 /**

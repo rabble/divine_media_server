@@ -242,6 +242,28 @@ export async function blossomUpload(req, env, deps) {
     // Continue anyway - blob is in R2
   }
 
+  // Trigger content moderation (non-blocking)
+  if (env.MODERATION_ENABLED === 'true' && env.MODERATION_QUEUE) {
+    try {
+      // Send to moderation queue asynchronously
+      await env.MODERATION_QUEUE.send({
+        sha256,
+        r2Key,
+        uploadedBy: auth.pubkey,
+        uploadedAt: timestamp,
+        metadata: {
+          fileSize: size,
+          contentType,
+          uid
+        }
+      });
+      console.log(`📋 Upload: Queued for moderation - ${sha256}`);
+    } catch (error) {
+      console.error(`⚠️ Upload: Failed to queue moderation:`, error);
+      // Don't fail the upload if moderation queueing fails
+    }
+  }
+
   // Return Blossom-compliant blob descriptor
   const cdnDomain = env.STREAM_DOMAIN || env.CDN_DOMAIN || 'cdn.divine.video';
   const fileExt = getFileExtension(contentType);
