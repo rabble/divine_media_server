@@ -5,9 +5,10 @@
  * Verify Blossom authorization event (kind 24242)
  * @param {Request} req - The HTTP request
  * @param {Object} deps - Dependencies
+ * @param {Object} env - Environment variables
  * @returns {Promise<Object|null>} - Auth result with pubkey or null if invalid
  */
-export async function verifyBlossomAuth(req, deps = {}) {
+export async function verifyBlossomAuth(req, deps = {}, env = {}) {
   const auth = req.headers.get("authorization") || req.headers.get("Authorization");
   console.log("🌸 Blossom auth called");
 
@@ -167,19 +168,23 @@ export async function verifyBlossomAuth(req, deps = {}) {
       return null;
     }
 
-    // Schnorr signature verification
-    try {
-      console.log("🌸 Starting Schnorr verification");
-      const { schnorr } = await import('@noble/curves/secp256k1');
-      const isValid = await schnorr.verify(event.sig, id, event.pubkey);
-      console.log("🌸 Schnorr verification result:", isValid);
-      if (!isValid) {
-        console.log("🌸 Signature verification failed");
+    // Schnorr signature verification (skip in DEV_AUTH_MODE)
+    if (env.DEV_AUTH_MODE === 'true') {
+      console.log("🌸 DEV_AUTH_MODE: Skipping signature verification");
+    } else {
+      try {
+        console.log("🌸 Starting Schnorr verification");
+        const { schnorr } = await import('@noble/curves/secp256k1');
+        const isValid = await schnorr.verify(event.sig, id, event.pubkey);
+        console.log("🌸 Schnorr verification result:", isValid);
+        if (!isValid) {
+          console.log("🌸 Signature verification failed");
+          return null;
+        }
+      } catch (error) {
+        console.log("🌸 Schnorr verification error:", error.message);
         return null;
       }
-    } catch (error) {
-      console.log("🌸 Schnorr verification error:", error.message);
-      return null;
     }
 
     console.log("🌸 Blossom auth SUCCESS! Returning result");

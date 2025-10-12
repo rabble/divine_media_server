@@ -34,6 +34,9 @@ id = "eca883e0a5374b32ab92b3747235a1e3"
 [env.production]
 name = "cf-stream-service-prod"
 account_id = "c84e7a9bf7ed99cb41b8e73566568c75"
+routes = [
+  { pattern = "blossom.divine.video/*", zone_name = "divine.video" }
+]
 [env.production.vars]
 LOOKUPS_ENABLED = true
 # Stream removed - using R2 only
