@@ -75,17 +75,86 @@ export default {
  * Handle GET/HEAD blob request
  */
 async function handleGetBlob(sha256, isHead, blobStorage, metadataStore, req, env) {
-  // Check quarantine status before serving
+  // Check moderation status (tiered access control)
   if (env.MODERATION_KV) {
-    const quarantine = await env.MODERATION_KV.get(`quarantine:${sha256}`);
-    if (quarantine) {
-      return new Response('Content unavailable due to moderation', {
+    // Check for PERMANENT_BAN first (never serve except to admins)
+    const permanentBan = await env.MODERATION_KV.get(`permanent-ban:${sha256}`);
+    if (permanentBan) {
+      return new Response(JSON.stringify({
+        error: 'content_banned',
+        message: 'This content has been permanently removed and cannot be accessed',
+        status: 451
+      }), {
         status: 451,
         headers: {
-          'Content-Type': 'text/plain',
+          'Content-Type': 'application/json',
           'Access-Control-Allow-Origin': '*'
         }
       });
+    }
+
+    // Check for AGE_RESTRICTED (requires user preferences)
+    const ageRestricted = await env.MODERATION_KV.get(`age-restricted:${sha256}`);
+    if (ageRestricted) {
+      const restriction = JSON.parse(ageRestricted);
+
+      // Check if user is authenticated and has appropriate preferences
+      const authHeader = req.headers.get('authorization');
+      if (!authHeader || !authHeader.startsWith('Nostr ')) {
+        return new Response(JSON.stringify({
+          error: 'authentication_required',
+          message: `This content is age-restricted (${restriction.category}). Please authenticate with Nostr to access.`,
+          category: restriction.category,
+          status: 401
+        }), {
+          status: 401,
+          headers: {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+            'WWW-Authenticate': 'Nostr'
+          }
+        });
+      }
+
+      // Verify auth and check preferences
+      const auth = await verifyBlossomAuth(req, env);
+      if (!auth) {
+        return new Response(JSON.stringify({
+          error: 'invalid_auth',
+          message: 'Invalid Nostr authentication',
+          status: 401
+        }), {
+          status: 401,
+          headers: {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*'
+          }
+        });
+      }
+
+      // Fetch user preferences (NIP-78)
+      const { fetchUserContentPreferences, checkContentAccess } = await import('./nip78-preferences.mjs');
+      const preferences = await fetchUserContentPreferences(auth.pubkey);
+
+      // Check if user has permission for this content category
+      if (!checkContentAccess(preferences, restriction.category)) {
+        return new Response(JSON.stringify({
+          error: 'content_restricted',
+          message: `You have not opted in to view ${restriction.category} content. Please update your content preferences.`,
+          category: restriction.category,
+          preferences_url: `https://divine.video/settings/content-preferences`,
+          status: 403
+        }), {
+          status: 403,
+          headers: {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*'
+          }
+        });
+      }
+
+      // User has permission, continue to serve content
+      console.log(`[ACCESS] User ${auth.pubkey.substring(0,8)} granted access to ${restriction.category} content ${sha256.substring(0,8)}`);
     }
   }
 
@@ -251,7 +320,6 @@ async function handleUploadBlob(request, blobStorage, metadataStore, env, ctx) {
     ctx.waitUntil(
       env.MODERATION_QUEUE.send({
         sha256,
-        r2Key: `videos/${sha256}.mp4`,
         uploadedBy: auth.pubkey,
         uploadedAt: uploadTimestamp,
         metadata: {
