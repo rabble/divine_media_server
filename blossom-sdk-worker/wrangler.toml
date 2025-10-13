@@ -17,6 +17,11 @@ id = "fc3fb1f988894752ae62462d5d0d2222"
 binding = "R2_BLOBS"
 bucket_name = "nostrvine-media"
 
+# Moderation KV for checking quarantine status
+[[kv_namespaces]]
+binding = "MODERATION_KV"
+id = "eee0689974834390acd39d543002cac3"
+
 # Staging environment
 [env.staging]
 name = "blossom-sdk-worker-staging"
@@ -44,11 +49,21 @@ routes = [
 
 [env.production.vars]
 STREAM_DOMAIN = "cdn.divine.video"
+MODERATION_ENABLED = "true"
 
 [[env.production.kv_namespaces]]
 binding = "MEDIA_KV"
 id = "effcf271031647f0947983f5f4211aa2"
 
+[[env.production.kv_namespaces]]
+binding = "MODERATION_KV"
+id = "eee0689974834390acd39d543002cac3"
+
 [[env.production.r2_buckets]]
 binding = "R2_BLOBS"
 bucket_name = "nostrvine-media"
+
+# Queue producer for video moderation
+[[env.production.queues.producers]]
+binding = "MODERATION_QUEUE"
+queue = "video-moderation-queue"

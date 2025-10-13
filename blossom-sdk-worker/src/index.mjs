@@ -37,13 +37,13 @@ export default {
       if (method === 'GET' || method === 'HEAD') {
         const match = url.pathname.match(/^\/([a-f0-9]{64})(\.[a-z0-9]+)?$/);
         if (match) {
-          return await handleGetBlob(match[1], method === 'HEAD', blobStorage, metadataStore, request);
+          return await handleGetBlob(match[1], method === 'HEAD', blobStorage, metadataStore, request, env);
         }
       }
 
       // PUT /upload - Upload blob
       if (method === 'PUT' && url.pathname === '/upload') {
-        return await handleUploadBlob(request, blobStorage, metadataStore, env);
+        return await handleUploadBlob(request, blobStorage, metadataStore, env, ctx);
       }
 
       // GET /list/<pubkey> - List user's blobs
@@ -74,7 +74,21 @@ export default {
 /**
  * Handle GET/HEAD blob request
  */
-async function handleGetBlob(sha256, isHead, blobStorage, metadataStore, req) {
+async function handleGetBlob(sha256, isHead, blobStorage, metadataStore, req, env) {
+  // Check quarantine status before serving
+  if (env.MODERATION_KV) {
+    const quarantine = await env.MODERATION_KV.get(`quarantine:${sha256}`);
+    if (quarantine) {
+      return new Response('Content unavailable due to moderation', {
+        status: 451,
+        headers: {
+          'Content-Type': 'text/plain',
+          'Access-Control-Allow-Origin': '*'
+        }
+      });
+    }
+  }
+
   // Check if blob exists in metadata
   const metadata = await metadataStore.getBlob(sha256);
   if (!metadata) {
@@ -147,7 +161,7 @@ async function handleGetBlob(sha256, isHead, blobStorage, metadataStore, req) {
 /**
  * Handle blob upload (PUT /upload)
  */
-async function handleUploadBlob(request, blobStorage, metadataStore, env) {
+async function handleUploadBlob(request, blobStorage, metadataStore, env, ctx) {
   // Verify authentication
   const auth = await verifyBlossomAuth(request, env);
   if (!auth) {
@@ -230,6 +244,30 @@ async function handleUploadBlob(request, blobStorage, metadataStore, env) {
 
   // Store owner relationship
   await metadataStore.addBlobOwner(sha256, auth.pubkey);
+
+  // Send to moderation queue (non-blocking)
+  if (env.MODERATION_ENABLED === 'true' && env.MODERATION_QUEUE && ctx) {
+    const uploadTimestamp = Date.now();
+    ctx.waitUntil(
+      env.MODERATION_QUEUE.send({
+        sha256,
+        r2Key: `videos/${sha256}.mp4`,
+        uploadedBy: auth.pubkey,
+        uploadedAt: uploadTimestamp,
+        metadata: {
+          fileSize: size,
+          contentType,
+          duration: 6, // Placeholder - would need actual duration detection
+          proofMode: {
+            verified: proofModeResult.verified,
+            level: proofModeResult.level
+          }
+        }
+      }).catch(err => {
+        console.error('Failed to queue for moderation:', err);
+      })
+    );
+  }
 
   const domain = env.STREAM_DOMAIN || 'cdn.divine.video';
   const fileExt = getFileExtension(contentType);
