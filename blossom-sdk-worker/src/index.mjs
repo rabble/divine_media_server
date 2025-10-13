@@ -158,6 +158,9 @@ async function handleGetBlob(sha256, isHead, blobStorage, metadataStore, req, en
     }
   }
 
+  // Note: REVIEW and SAFE content serve normally without restrictions
+  // REVIEW content is logged by moderation service and published to Nostr for manual review
+
   // Check if blob exists in metadata
   const metadata = await metadataStore.getBlob(sha256);
   if (!metadata) {
