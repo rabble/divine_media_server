@@ -17,8 +17,15 @@ export class R2BlobStorage {
 
   async hasBlob(sha256) {
     try {
+      // Check new path first
       const obj = await this.r2.head(`blobs/${sha256}`);
-      return obj !== null;
+      if (obj !== null) return true;
+    } catch {}
+
+    try {
+      // Fallback to old path for backward compatibility
+      const oldObj = await this.r2.head(`videos/${sha256}.mp4`);
+      return oldObj !== null;
     } catch {
       return false;
     }
@@ -55,8 +62,13 @@ export class R2BlobStorage {
   }
 
   async readBlob(sha256) {
-    const key = `blobs/${sha256}`;
-    const obj = await this.r2.get(key);
+    // Try new path first
+    let obj = await this.r2.get(`blobs/${sha256}`);
+
+    // Fallback to old path for backward compatibility
+    if (!obj) {
+      obj = await this.r2.get(`videos/${sha256}.mp4`);
+    }
 
     if (!obj) {
       return null;

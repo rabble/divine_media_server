@@ -16,14 +16,38 @@ export class KVMetadataStore {
   }
 
   async hasBlob(sha256) {
+    // Try new format first
     const blob = await this.kv.get(`blob:${sha256}`);
-    return blob !== null;
+    if (blob !== null) return true;
+
+    // Fallback to old format for backward compatibility
+    const oldIndex = await this.kv.get(`idx:sha256:${sha256}`);
+    return oldIndex !== null;
   }
 
   async getBlob(sha256) {
+    // Try new format first
     const data = await this.kv.get(`blob:${sha256}`);
-    if (!data) return null;
-    return JSON.parse(data);
+    if (data) return JSON.parse(data);
+
+    // Fallback to old format for backward compatibility
+    const oldIndex = await this.kv.get(`idx:sha256:${sha256}`);
+    if (oldIndex) {
+      const { uid } = JSON.parse(oldIndex);
+      const videoData = await this.kv.get(`video:${uid}`);
+      if (videoData) {
+        const video = JSON.parse(videoData);
+        // Convert old format to new format
+        return {
+          sha256: video.sha256 || sha256,
+          size: video.size || 0,
+          type: video.contentType || 'video/mp4',
+          uploaded: Math.floor((video.createdAt || Date.now()) / 1000)
+        };
+      }
+    }
+
+    return null;
   }
 
   async addBlob(blob) {
@@ -72,14 +96,37 @@ export class KVMetadataStore {
   }
 
   async getBlobsForPubkey(pubkey) {
-    const list = await this.kv.list({ prefix: `pubkey:${pubkey}:` });
     const blobs = [];
 
-    for (const key of list.keys) {
+    // Get blobs from new format
+    const newList = await this.kv.list({ prefix: `pubkey:${pubkey}:` });
+    for (const key of newList.keys) {
       const sha256 = key.name.split(':')[2];
       const blob = await this.getBlob(sha256);
       if (blob) {
         blobs.push(blob);
+      }
+    }
+
+    // Get blobs from old format for backward compatibility
+    const oldList = await this.kv.list({ prefix: `idx:pubkey:${pubkey}:` });
+    for (const key of oldList.keys) {
+      const uid = key.name.split(':').pop();
+      const videoData = await this.kv.get(`video:${uid}`);
+      if (videoData) {
+        const video = JSON.parse(videoData);
+        if (video.sha256) {
+          // Check if we already added this blob from new format
+          const exists = blobs.some(b => b.sha256 === video.sha256);
+          if (!exists) {
+            blobs.push({
+              sha256: video.sha256,
+              size: video.size || 0,
+              type: video.contentType || 'video/mp4',
+              uploaded: Math.floor((video.createdAt || Date.now()) / 1000)
+            });
+          }
+        }
       }
     }
 
