@@ -287,7 +287,7 @@ async function handleUploadBlob(request, blobStorage, metadataStore, env, ctx) {
     });
   }
 
-  // Validate ProofMode (doesn't block upload)
+  // Validate ProofMode
   let proofModeResult;
   try {
     proofModeResult = await validateProofMode(request, sha256, blob);
@@ -299,6 +299,27 @@ async function handleUploadBlob(request, blobStorage, metadataStore, env, ctx) {
       level: 'unverified',
       message: 'ProofMode validation error'
     };
+  }
+
+  // Require ProofMode verification for video uploads
+  const isVideo = contentType.startsWith('video/');
+  if (isVideo && env.REQUIRE_PROOFMODE_FOR_VIDEOS === 'true') {
+    // Check if ProofMode is verified (at least verified_web level)
+    const isProofModeVerified = proofModeResult.verified &&
+      (proofModeResult.level === 'verified_mobile' || proofModeResult.level === 'verified_web');
+
+    if (!isProofModeVerified) {
+      return jsonResponse(400, {
+        error: 'proofmode_required',
+        message: 'Video uploads require ProofMode verification. Please include X-ProofMode-Manifest and X-ProofMode-Signature headers.',
+        proofmode_level: proofModeResult.level,
+        proofmode_message: proofModeResult.message,
+        required_level: 'verified_web or verified_mobile',
+        documentation: 'https://github.com/guardianproject/proofmode'
+      });
+    }
+
+    console.log(`✅ Video upload with verified ProofMode: level=${proofModeResult.level}, fingerprint=${proofModeResult.deviceFingerprint}`);
   }
 
   // Generate UID for this blob

@@ -7,6 +7,7 @@ account_id = "c84e7a9bf7ed99cb41b8e73566568c75"
 [vars]
 DEV_AUTH_MODE = "true"
 STREAM_DOMAIN = "cdn.divine.video"
+REQUIRE_PROOFMODE_FOR_VIDEOS = "false"  # Set to "true" after launch
 
 [[kv_namespaces]]
 binding = "MEDIA_KV"
@@ -50,6 +51,7 @@ routes = [
 [env.production.vars]
 STREAM_DOMAIN = "cdn.divine.video"
 MODERATION_ENABLED = "true"
+REQUIRE_PROOFMODE_FOR_VIDEOS = "false"  # Set to "true" after launch
 
 [[env.production.kv_namespaces]]
 binding = "MEDIA_KV"
