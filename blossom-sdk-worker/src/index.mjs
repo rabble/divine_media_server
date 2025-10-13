@@ -33,6 +33,17 @@ export default {
       }
 
       // Route requests
+      // GET / - Home page
+      if (method === 'GET' && url.pathname === '/') {
+        return new Response(getHomePage(), {
+          status: 200,
+          headers: {
+            'Content-Type': 'text/html',
+            'Cache-Control': 'public, max-age=300'
+          }
+        });
+      }
+
       // GET /<sha256> - Retrieve blob
       if (method === 'GET' || method === 'HEAD') {
         const match = url.pathname.match(/^\/([a-f0-9]{64})(\.[a-z0-9]+)?$/);
@@ -485,4 +496,139 @@ function jsonResponse(status, body) {
       'Access-Control-Allow-Origin': '*'
     }
   });
+}
+
+/**
+ * Get home page HTML
+ */
+function getHomePage() {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Divine Blossom Server</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 2rem;
+      line-height: 1.6;
+      color: #333;
+    }
+    h1 { color: #5a67d8; margin-bottom: 0.5rem; }
+    h2 { color: #4a5568; margin-top: 2rem; border-bottom: 2px solid #e2e8f0; padding-bottom: 0.5rem; }
+    code {
+      background: #f7fafc;
+      padding: 0.2rem 0.4rem;
+      border-radius: 3px;
+      font-size: 0.9em;
+    }
+    pre {
+      background: #2d3748;
+      color: #f7fafc;
+      padding: 1rem;
+      border-radius: 6px;
+      overflow-x: auto;
+    }
+    .endpoint { margin: 1rem 0; }
+    .method {
+      display: inline-block;
+      padding: 0.2rem 0.5rem;
+      border-radius: 3px;
+      font-weight: bold;
+      font-size: 0.85em;
+      margin-right: 0.5rem;
+    }
+    .get { background: #48bb78; color: white; }
+    .put { background: #ed8936; color: white; }
+    .delete { background: #f56565; color: white; }
+    .head { background: #4299e1; color: white; }
+    a { color: #5a67d8; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .badge {
+      display: inline-block;
+      padding: 0.2rem 0.6rem;
+      border-radius: 12px;
+      font-size: 0.75em;
+      font-weight: 600;
+      margin-left: 0.5rem;
+    }
+    .badge-new { background: #48bb78; color: white; }
+    .badge-beta { background: #ed8936; color: white; }
+  </style>
+</head>
+<body>
+  <h1>Divine Blossom Server <span class="badge badge-beta">BETA</span></h1>
+  <p>Content-addressable blob storage implementing the <a href="https://github.com/hzrd149/blossom" target="_blank">Blossom protocol</a> with AI-powered content moderation.</p>
+
+  <h2>API Endpoints</h2>
+
+  <div class="endpoint">
+    <span class="method get">GET</span>
+    <code>/{sha256}</code>
+    <p>Retrieve a blob by its SHA-256 hash. Supports range requests for streaming.</p>
+    <p><strong>Moderation:</strong> Age-restricted content requires Nostr authentication. Banned content returns HTTP 451.</p>
+  </div>
+
+  <div class="endpoint">
+    <span class="method head">HEAD</span>
+    <code>/{sha256}</code>
+    <p>Check if a blob exists and get its metadata without downloading the content.</p>
+  </div>
+
+  <div class="endpoint">
+    <span class="method put">PUT</span>
+    <code>/upload</code>
+    <p>Upload a new blob. Requires Nostr authentication (kind 24242).</p>
+    <p><strong>Features:</strong> Automatic content moderation, ProofMode support for verified media.</p>
+  </div>
+
+  <div class="endpoint">
+    <span class="method get">GET</span>
+    <code>/list/{pubkey}</code>
+    <p>List all blobs owned by a Nostr public key.</p>
+  </div>
+
+  <div class="endpoint">
+    <span class="method delete">DELETE</span>
+    <code>/{sha256}</code>
+    <p>Delete a blob. Requires Nostr authentication and ownership.</p>
+  </div>
+
+  <h2>Content Moderation <span class="badge badge-new">NEW</span></h2>
+  <p>All uploads are automatically analyzed by AI for harmful content:</p>
+  <ul>
+    <li><strong>SAFE:</strong> Serves without restrictions</li>
+    <li><strong>REVIEW:</strong> Flagged for human review, serves normally</li>
+    <li><strong>AGE_RESTRICTED:</strong> Requires Nostr auth + user content preferences (NIP-78)</li>
+    <li><strong>PERMANENT_BAN:</strong> Never served (HTTP 451)</li>
+  </ul>
+
+  <h2>Authentication</h2>
+  <p>Uses Nostr authentication via <strong>kind 24242</strong> events (Blossom protocol).</p>
+  <p>Age-restricted content also checks NIP-78 user preferences for consent.</p>
+
+  <h2>ProofMode Support</h2>
+  <p>Upload media with cryptographic proof of authenticity using ProofMode headers:</p>
+  <ul>
+    <li><code>X-ProofMode-Manifest</code> - Photo/video metadata</li>
+    <li><code>X-ProofMode-Signature</code> - Cryptographic signature</li>
+    <li><code>X-ProofMode-Attestation</code> - Guardian Project attestation</li>
+  </ul>
+
+  <h2>Resources</h2>
+  <ul>
+    <li><a href="https://github.com/hzrd149/blossom" target="_blank">Blossom Protocol Specification</a></li>
+    <li><a href="https://github.com/nostr-protocol/nips" target="_blank">Nostr NIPs</a></li>
+    <li><a href="https://github.com/guardianproject/proofmode" target="_blank">ProofMode by Guardian Project</a></li>
+  </ul>
+
+  <footer style="margin-top: 3rem; padding-top: 2rem; border-top: 1px solid #e2e8f0; color: #718096; font-size: 0.9em;">
+    <p>Powered by <a href="https://workers.cloudflare.com/" target="_blank">Cloudflare Workers</a> •
+    Built with <a href="https://github.com/hzrd149/blossom-server-sdk" target="_blank">blossom-server-sdk</a></p>
+  </footer>
+</body>
+</html>`;
 }
