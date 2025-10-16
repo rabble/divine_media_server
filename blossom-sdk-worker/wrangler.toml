@@ -7,6 +7,7 @@ account_id = "c84e7a9bf7ed99cb41b8e73566568c75"
 [vars]
 DEV_AUTH_MODE = "true"
 STREAM_DOMAIN = "cdn.divine.video"
+STREAM_CUSTOMER_DOMAIN = "customer-4c3uhd5qzuhwz9hu.cloudflarestream.com"
 REQUIRE_PROOFMODE_FOR_VIDEOS = "false"  # Set to "true" after launch
 
 [[kv_namespaces]]
@@ -31,6 +32,7 @@ account_id = "c84e7a9bf7ed99cb41b8e73566568c75"
 [env.staging.vars]
 DEV_AUTH_MODE = "true"
 STREAM_DOMAIN = "cdn-staging.divine.video"
+STREAM_CUSTOMER_DOMAIN = "customer-4c3uhd5qzuhwz9hu.cloudflarestream.com"
 
 [[env.staging.kv_namespaces]]
 binding = "MEDIA_KV"
@@ -45,11 +47,13 @@ bucket_name = "nostrvine-media"
 name = "blossom-sdk-worker-prod"
 account_id = "c84e7a9bf7ed99cb41b8e73566568c75"
 routes = [
-  { pattern = "blossom.divine.video/*", zone_name = "divine.video" }
+  { pattern = "blossom.divine.video/*", zone_name = "divine.video" },
+  { pattern = "cdn.divine.video/*", zone_name = "divine.video" }
 ]
 
 [env.production.vars]
 STREAM_DOMAIN = "cdn.divine.video"
+STREAM_CUSTOMER_DOMAIN = "customer-4c3uhd5qzuhwz9hu.cloudflarestream.com"
 MODERATION_ENABLED = "true"
 REQUIRE_PROOFMODE_FOR_VIDEOS = "false"  # Set to "true" after launch
 

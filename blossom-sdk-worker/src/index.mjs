@@ -44,6 +44,26 @@ export default {
         });
       }
 
+      // TEMP: GET /_list_r2 - List R2 contents for debugging
+      if (method === 'GET' && url.pathname === '/_list_r2') {
+        const prefix = url.searchParams.get('prefix') || '';
+        const limit = parseInt(url.searchParams.get('limit') || '20');
+        const listed = await env.R2_BLOBS.list({ prefix, limit });
+        const objects = listed.objects.map(obj => ({ key: obj.key, size: obj.size }));
+        return jsonResponse(200, { prefix, count: objects.length, truncated: listed.truncated, objects });
+      }
+
+      // OLD: GET /{uid}/... - Legacy video URLs (thumbnails, manifests, etc)
+      // These are 32-character hex UIDs from the old Cloudflare Stream system
+      if (method === 'GET' || method === 'HEAD') {
+        const uidMatch = url.pathname.match(/^\/([a-f0-9]{32})\/(.*)/);
+        if (uidMatch) {
+          const uid = uidMatch[1];
+          const subpath = uidMatch[2];
+          return await handleLegacyUidUrl(uid, subpath, method === 'HEAD', request, env);
+        }
+      }
+
       // GET /<sha256> - Retrieve blob
       if (method === 'GET' || method === 'HEAD') {
         const match = url.pathname.match(/^\/([a-f0-9]{64})(\.[a-z0-9]+)?$/);
@@ -192,25 +212,31 @@ async function handleGetBlob(sha256, isHead, blobStorage, metadataStore, req, en
     });
   }
 
-  // For GET requests, stream the blob
-  const blob = await blobStorage.readBlob(sha256);
-  if (!blob) {
-    return new Response('Not Found', { status: 404 });
-  }
+  // Check for range request BEFORE fetching blob
+  const rangeHeader = req.headers.get('range');
+  let blob;
 
-  // Support HTTP range requests for video streaming
-  const range = req.headers.get('range');
-  if (range) {
-    const parts = range.replace(/bytes=/, '').split('-');
+  if (rangeHeader) {
+    // Parse range request
+    const parts = rangeHeader.replace(/bytes=/, '').split('-');
     const start = parseInt(parts[0], 10);
-    const end = parts[1] ? parseInt(parts[1], 10) : blob.size - 1;
-    const chunksize = (end - start) + 1;
+    const end = parts[1] ? parseInt(parts[1], 10) : metadata.size - 1;
 
+    // Fetch only the requested range from R2
+    blob = await blobStorage.readBlob(sha256, {
+      range: { offset: start, length: end - start + 1 }
+    });
+
+    if (!blob) {
+      return new Response('Not Found', { status: 404 });
+    }
+
+    // Return 206 Partial Content
     const headers = new Headers();
     headers.set('Content-Type', blob.type || 'application/octet-stream');
-    headers.set('Content-Range', `bytes ${start}-${end}/${blob.size}`);
+    headers.set('Content-Range', `bytes ${start}-${end}/${metadata.size}`);
     headers.set('Accept-Ranges', 'bytes');
-    headers.set('Content-Length', chunksize.toString());
+    headers.set('Content-Length', (end - start + 1).toString());
     headers.set('Access-Control-Allow-Origin', '*');
     headers.set('Cache-Control', 'public, max-age=31536000, immutable');
 
@@ -224,10 +250,16 @@ async function handleGetBlob(sha256, isHead, blobStorage, metadataStore, req, en
     });
   }
 
-  // Regular GET request
+  // Regular GET request - fetch entire blob
+  blob = await blobStorage.readBlob(sha256);
+  if (!blob) {
+    return new Response('Not Found', { status: 404 });
+  }
+
   const headers = new Headers();
   headers.set('Content-Type', blob.type || 'application/octet-stream');
   headers.set('Content-Length', blob.size.toString());
+  headers.set('Accept-Ranges', 'bytes');
   headers.set('Access-Control-Allow-Origin', '*');
   headers.set('Cache-Control', 'public, max-age=31536000, immutable');
 
@@ -517,6 +549,97 @@ function jsonResponse(status, body) {
       'Access-Control-Allow-Origin': '*'
     }
   });
+}
+
+/**
+ * Handle legacy UID-based URLs (/{uid}/thumbnails/..., etc)
+ * These are from the old Cloudflare Stream system
+ * Uses lazy migration: proxy from Stream on first request, then cache in R2
+ */
+async function handleLegacyUidUrl(uid, subpath, isHead, request, env) {
+  // Handle thumbnail requests: /{uid}/thumbnails/thumbnail.jpg
+  if (subpath.startsWith('thumbnails/')) {
+    // Check if we have this thumbnail cached in R2 using UID-based key
+    const thumbnailKey = `thumbnails/${uid}.jpg`;
+    let thumbnail = await env.R2_BLOBS.get(thumbnailKey);
+
+    if (thumbnail) {
+      // Serve from R2 cache
+      const headers = new Headers();
+      headers.set('Content-Type', 'image/jpeg');
+      headers.set('Content-Length', thumbnail.size.toString());
+      headers.set('Access-Control-Allow-Origin', '*');
+      headers.set('Cache-Control', 'public, max-age=31536000, immutable');
+
+      if (thumbnail.etag) {
+        headers.set('ETag', thumbnail.etag);
+      }
+
+      if (isHead) {
+        return new Response(null, { status: 200, headers });
+      }
+
+      return new Response(thumbnail.body, { status: 200, headers });
+    }
+
+    // Not in R2 cache - fetch from Cloudflare Stream and cache it
+    const streamDomain = env.STREAM_CUSTOMER_DOMAIN || 'customer-4c3uhd5qzuhwz9hu.cloudflarestream.com';
+    const streamUrl = `https://${streamDomain}/${uid}/thumbnails/thumbnail.jpg`;
+
+    try {
+      const streamResponse = await fetch(streamUrl);
+
+      if (!streamResponse.ok) {
+        return new Response('Not Found', { status: 404 });
+      }
+
+      const thumbnailData = await streamResponse.arrayBuffer();
+
+      // Cache in R2 for future requests (non-blocking)
+      try {
+        await env.R2_BLOBS.put(thumbnailKey, thumbnailData, {
+          httpMetadata: {
+            contentType: 'image/jpeg',
+            cacheControl: 'public, max-age=31536000, immutable'
+          }
+        });
+        console.log(`✅ Cached thumbnail from Stream: ${thumbnailKey}`);
+      } catch (error) {
+        console.error(`⚠️ Failed to cache thumbnail in R2:`, error);
+        // Continue anyway - we can still serve it
+      }
+
+      // Serve to user
+      const headers = new Headers();
+      headers.set('Content-Type', 'image/jpeg');
+      headers.set('Content-Length', thumbnailData.byteLength.toString());
+      headers.set('Access-Control-Allow-Origin', '*');
+      headers.set('Cache-Control', 'public, max-age=31536000, immutable');
+
+      if (isHead) {
+        return new Response(null, { status: 200, headers });
+      }
+
+      return new Response(thumbnailData, { status: 200, headers });
+
+    } catch (error) {
+      console.error(`❌ Failed to fetch thumbnail from Stream:`, error);
+      return new Response('Not Found', { status: 404 });
+    }
+  }
+
+  // For other legacy paths (manifests, etc), proxy to Stream
+  const streamDomain = env.STREAM_CUSTOMER_DOMAIN || 'customer-4c3uhd5qzuhwz9hu.cloudflarestream.com';
+  const streamUrl = `https://${streamDomain}/${uid}/${subpath}`;
+
+  try {
+    return await fetch(streamUrl, {
+      method: request.method,
+      headers: request.headers
+    });
+  } catch (error) {
+    return new Response('Not Found', { status: 404 });
+  }
 }
 
 /**

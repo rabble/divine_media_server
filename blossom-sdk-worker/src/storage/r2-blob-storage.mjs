@@ -61,13 +61,26 @@ export class R2BlobStorage {
     return true;
   }
 
-  async readBlob(sha256) {
+  async readBlob(sha256, options = {}) {
+    const { range } = options;
+
+    // Build R2 get options
+    const r2Options = {};
+    if (range) {
+      r2Options.range = range;
+    }
+
     // Try new path first
-    let obj = await this.r2.get(`blobs/${sha256}`);
+    let obj = await this.r2.get(`blobs/${sha256}`, r2Options);
 
     // Fallback to old path for backward compatibility
     if (!obj) {
-      obj = await this.r2.get(`videos/${sha256}.mp4`);
+      obj = await this.r2.get(`videos/${sha256}.mp4`, r2Options);
+    }
+
+    // Fallback to root level (old old path)
+    if (!obj) {
+      obj = await this.r2.get(`${sha256}.mp4`, r2Options);
     }
 
     if (!obj) {
@@ -78,7 +91,8 @@ export class R2BlobStorage {
       body: obj.body,
       size: obj.size,
       type: obj.httpMetadata?.contentType || 'application/octet-stream',
-      etag: obj.etag
+      etag: obj.etag,
+      range: obj.range  // R2 returns range info if range was requested
     };
   }
 

@@ -114,6 +114,27 @@ Implements `IBlobMetadataStore` interface for Cloudflare KV:
 - `addBlobOwner(sha256, pubkey)` - Associate owner
 - `getBlobsForPubkey(pubkey)` - List user's blobs
 
+## Configuration Notes
+
+### Cloudflare Stream Domain
+
+For legacy video thumbnail support, the worker needs to fetch thumbnails from Cloudflare Stream.
+
+**IMPORTANT:** The Stream customer subdomain is **NOT** based on your account ID. You must configure `STREAM_CUSTOMER_DOMAIN` explicitly in `wrangler.toml`:
+
+```toml
+[vars]
+STREAM_CUSTOMER_DOMAIN = "customer-4c3uhd5qzuhwz9hu.cloudflarestream.com"
+```
+
+To find your Stream customer domain:
+1. Go to Cloudflare Dashboard → Stream
+2. Click on any video
+3. Look at the video URL, it will be in the format: `https://customer-XXXXXXXXXX.cloudflarestream.com/VIDEO_ID/...`
+4. Use the full subdomain (e.g., `customer-XXXXXXXXXX.cloudflarestream.com`)
+
+**Common mistake:** Trying to construct the domain from the account ID (e.g., `customer-${ACCOUNT_ID}.cloudflarestream.com`) will result in 404 errors for thumbnail requests.
+
 ## TODO
 
 - [ ] Add full signature verification

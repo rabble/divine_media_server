@@ -1,5 +1,39 @@
 # Changelog
 
+## [2025-10-16] - Fix Legacy Video Thumbnail 404 Errors
+
+### Fixed
+- **Thumbnail 404s** - Legacy video thumbnails from Cloudflare Stream were returning 404 errors
+- **Stream domain construction** - Fixed incorrect URL construction using account ID instead of customer subdomain
+
+### Root Cause
+The code was constructing Stream URLs as:
+```
+https://customer-${ACCOUNT_ID}.cloudflarestream.com/...
+```
+But Cloudflare Stream customer subdomains are **not** based on account ID. They use a separate hash identifier like `customer-4c3uhd5qzuhwz9hu`.
+
+### Solution
+- Added `STREAM_CUSTOMER_DOMAIN` environment variable to `wrangler.toml` for all environments
+- Updated `handleLegacyUidUrl()` in `src/index.mjs` to use the configured domain instead of constructing from account ID
+- Updated configuration documentation to prevent this mistake in the future
+
+### Technical Details
+- Thumbnails now properly fetch from Stream on first request (~700ms)
+- Subsequent requests serve from R2 cache (~5ms)
+- Legacy video URLs like `/{uid}/thumbnails/thumbnail.jpg` now work correctly
+- All environments (dev, staging, production) now have correct Stream domain configured
+
+### Files Modified
+- `blossom-sdk-worker/wrangler.toml` - Added STREAM_CUSTOMER_DOMAIN to all environments
+- `blossom-sdk-worker/src/index.mjs:586,632` - Fixed domain construction in handleLegacyUidUrl
+- `blossom-sdk-worker/README.md` - Added configuration documentation
+
+### Impact
+- Fixes thumbnail loading in Flutter apps and other clients requesting legacy video thumbnails
+- No breaking changes - all existing functionality preserved
+- Thumbnails automatically cached in R2 on first request for faster subsequent loads
+
 ## [2025-01-28] - Fix CDN HTTP 500 Status Errors
 
 ### Fixed
